@@ -32,7 +32,7 @@
     </style>
   </head>
   <body>
-    <audio autoplay loop>
+    <audio id="jingle" loop>
       <source src="assets/jingle.mp3" type="audio/mp3" />
     </audio>
     <div class="cont">
@@ -42,5 +42,12 @@
         alt="RAV4"
       />
     </div>
+    <script>
+      document.addEventListener("click", function () {
+        const audio = document.getElementById("jingle");
+        audio.play();
+        document.removeEventListener("click", arguments.callee);
+      });
+    </script>
   </body>
 </html>
