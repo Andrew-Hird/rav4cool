@@ -20,3 +20,34 @@ img {
   vertical-align: middle;
   margin-bottom: 5px;
 }
+
+.ravs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.image-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.image-wrapper img {
+  /* display: block; */
+  /* max-width: 200px; */
+
+  /* border: 1px solid #ddd;
+  border-radius: 8px; */
+}
+
+.date-overlay {
+  position: absolute;
+  bottom: 10px;
+  right: 5px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: Arial, sans-serif;
+}
