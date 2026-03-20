@@ -25,7 +25,6 @@ jobs:
         env:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: bun run .github/scripts/process-rav.ts
 
       - name: Commit and push
