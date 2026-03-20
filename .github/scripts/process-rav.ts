@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import sharp from "sharp";
 
@@ -63,19 +64,15 @@ async function main(): Promise<void> {
 	const outputPath = `assets/ravs/${filename}`;
 
 	console.log(`Downloading: ${imageUrl}`);
-	// Fetch without auth first — GitHub's CDN redirects may not accept the token
-	let res = await fetch(imageUrl);
-	// If that fails, retry with the token (private repos)
-	if (!res.ok) {
-		res = await fetch(imageUrl, {
-			headers: { Authorization: `token ${process.env.GH_TOKEN}` },
-		});
-	}
-	if (!res.ok)
-		throw new Error(
-			`Failed to download image: ${res.status} ${res.statusText}`,
-		);
-	const buffer = Buffer.from(await res.arrayBuffer());
+	// Use curl -L so auth is sent to github.com but stripped on CDN redirect
+	const buffer = execFileSync("curl", [
+		"-L",
+		"--silent",
+		"--fail",
+		"-H",
+		`Authorization: Bearer ${process.env.GH_TOKEN}`,
+		imageUrl,
+	]);
 
 	console.log(`Optimizing → ${filename}`);
 	await sharp(buffer)
