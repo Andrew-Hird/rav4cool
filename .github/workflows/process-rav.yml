@@ -1,0 +1,55 @@
+name: Process RAV4 Upload
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Test
+        run: bun run test
+
+      - name: Process image
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run .github/scripts/process-rav.ts
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add assets/ravs/ index.html
+          git commit -m "$(cat /tmp/rav-commit-msg)"
+          git push
+
+      - name: Close issue with success comment
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FILENAME=$(cat /tmp/rav-filename)
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "Done! Added \`${FILENAME}\`. Site will update in ~1 min."
+          gh issue close ${{ github.event.issue.number }}
+
+      - name: Comment on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ github.event.issue.number }} \
+            --body "Failed to process. Make sure the issue body contains a GitHub image attachment. Optionally put a date (YYYYMMDD) in the title to override today's date."
