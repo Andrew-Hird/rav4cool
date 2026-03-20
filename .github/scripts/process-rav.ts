@@ -63,22 +63,16 @@ async function main(): Promise<void> {
 	);
 	const outputPath = `assets/ravs/${filename}`;
 
+	const tempPath = `/tmp/rav-download-${Date.now()}`;
 	console.log(`Downloading: ${imageUrl}`);
-	// Use curl -L so auth is sent to github.com but stripped on CDN redirect
-	const buffer = execFileSync("curl", [
-		"-L",
-		"--silent",
-		"--fail",
-		"-H",
-		`Authorization: Bearer ${process.env.GH_TOKEN}`,
-		imageUrl,
-	]);
+	execFileSync("curl", ["-L", "--silent", "--fail", "-o", tempPath, imageUrl]);
 
 	console.log(`Optimizing → ${filename}`);
-	await sharp(buffer)
+	await sharp(tempPath)
 		.resize(1200, 1200, { fit: "inside", withoutEnlargement: true })
 		.jpeg({ quality: 82, progressive: true })
 		.toFile(outputPath);
+	fs.unlinkSync(tempPath);
 
 	let html = fs.readFileSync("index.html", "utf8");
 	html = updateHtml(html, filename);
