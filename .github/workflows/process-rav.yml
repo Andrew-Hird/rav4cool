@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Test
+        run: bun run test
+
       - name: Process image
         env:
           ISSUE_TITLE: ${{ github.event.issue.title }}
