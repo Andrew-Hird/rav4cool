@@ -62,15 +62,26 @@ async function main(): Promise<void> {
 	);
 	const outputPath = `assets/ravs/${filename}`;
 
-	console.log(`Downloading: ${imageUrl}`);
-	const res = await fetch(imageUrl, {
-		headers: { Authorization: `token ${process.env.GH_TOKEN}` },
-	});
-	if (!res.ok)
-		throw new Error(
-			`Failed to download image: ${res.status} ${res.statusText}`,
-		);
-	const buffer = Buffer.from(await res.arrayBuffer());
+	let buffer: Buffer;
+	if (process.env.LOCAL_IMAGE) {
+		console.log(`Using local image: ${process.env.LOCAL_IMAGE}`);
+		buffer = fs.readFileSync(process.env.LOCAL_IMAGE);
+	} else {
+		console.log(`Downloading: ${imageUrl}`);
+		// Fetch without auth first — GitHub's CDN redirects may not accept the token
+		let res = await fetch(imageUrl);
+		// If that fails, retry with the token (private repos)
+		if (!res.ok) {
+			res = await fetch(imageUrl, {
+				headers: { Authorization: `token ${process.env.GH_TOKEN}` },
+			});
+		}
+		if (!res.ok)
+			throw new Error(
+				`Failed to download image: ${res.status} ${res.statusText}`,
+			);
+		buffer = Buffer.from(await res.arrayBuffer());
+	}
 
 	console.log(`Optimizing → ${filename}`);
 	await sharp(buffer)
