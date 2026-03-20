@@ -63,7 +63,9 @@ async function main(): Promise<void> {
 	const outputPath = `assets/ravs/${filename}`;
 
 	console.log(`Downloading: ${imageUrl}`);
-	const res = await fetch(imageUrl);
+	const res = await fetch(imageUrl, {
+		headers: { Authorization: `token ${process.env.GH_TOKEN}` },
+	});
 	if (!res.ok)
 		throw new Error(
 			`Failed to download image: ${res.status} ${res.statusText}`,
