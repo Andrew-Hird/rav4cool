@@ -65,9 +65,7 @@ export function updateGallery(gallery: Gallery, filename: string): Gallery {
 	return { images: [filename, ...gallery.images] };
 }
 
-export async function blurLicensePlates(
-	imageBuffer: Buffer,
-): Promise<Buffer> {
+export async function blurLicensePlates(imageBuffer: Buffer): Promise<Buffer> {
 	const apiKey = process.env.PLATE_RECOGNIZER_API_KEY;
 	if (!apiKey) {
 		console.log("PLATE_RECOGNIZER_API_KEY not set, skipping plate blur");
@@ -80,14 +78,11 @@ export async function blurLicensePlates(
 
 	let response: Response;
 	try {
-		response = await fetch(
-			"https://api.platerecognizer.com/v1/plate-reader/",
-			{
-				method: "POST",
-				headers: { Authorization: `Token ${apiKey}` },
-				body: formData,
-			},
-		);
+		response = await fetch("https://api.platerecognizer.com/v1/plate-reader/", {
+			method: "POST",
+			headers: { Authorization: `Token ${apiKey}` },
+			body: formData,
+		});
 	} catch (err) {
 		console.warn("Plate Recognizer request failed, skipping blur:", err);
 		return imageBuffer;
@@ -119,8 +114,14 @@ export async function blurLicensePlates(
 	for (const result of data.results) {
 		const left = Math.max(0, result.box.xmin - PADDING);
 		const top = Math.max(0, result.box.ymin - PADDING);
-		const width = Math.min(imgW - left, result.box.xmax - result.box.xmin + PADDING * 2);
-		const height = Math.min(imgH - top, result.box.ymax - result.box.ymin + PADDING * 2);
+		const width = Math.min(
+			imgW - left,
+			result.box.xmax - result.box.xmin + PADDING * 2,
+		);
+		const height = Math.min(
+			imgH - top,
+			result.box.ymax - result.box.ymin + PADDING * 2,
+		);
 
 		const blurred = await sharp(buf)
 			.extract({ left, top, width, height })
