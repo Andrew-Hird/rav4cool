@@ -4,6 +4,26 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import sharp from "sharp";
 
+interface PlateBox {
+	xmin: number;
+	ymin: number;
+	xmax: number;
+	ymax: number;
+}
+
+interface PlateResult {
+	box: PlateBox;
+	plate: string;
+}
+
+interface PlateRecognizerResponse {
+	results: PlateResult[];
+}
+
+interface Gallery {
+	images: string[];
+}
+
 export function getDate(title: string | null | undefined): string {
 	const match = (title ?? "").match(/\b(20\d{6})\b/);
 	if (match) return match[1];
@@ -34,16 +54,85 @@ export function getUniqueFilename(
 	return filename;
 }
 
-export function updateHtml(html: string, filename: string): string {
-	html = html.replace(
+export function updateOgImage(html: string, filename: string): string {
+	return html.replace(
 		/<meta property="og:image" content="[^"]*"/,
 		`<meta property="og:image" content="https://rav4.cool/assets/ravs/${filename}"`,
 	);
-	html = html.replace(
-		'<div class="ravs">',
-		`<div class="ravs">\n      <img src="assets/ravs/${filename}" alt="RAV4" />`,
-	);
-	return html;
+}
+
+export function updateGallery(gallery: Gallery, filename: string): Gallery {
+	return { images: [filename, ...gallery.images] };
+}
+
+export async function blurLicensePlates(
+	imageBuffer: Buffer,
+): Promise<Buffer> {
+	const apiKey = process.env.PLATE_RECOGNIZER_API_KEY;
+	if (!apiKey) {
+		console.log("PLATE_RECOGNIZER_API_KEY not set, skipping plate blur");
+		return imageBuffer;
+	}
+
+	const formData = new FormData();
+	const blob = new Blob([imageBuffer], { type: "image/jpeg" });
+	formData.append("upload", blob, "image.jpg");
+
+	let response: Response;
+	try {
+		response = await fetch(
+			"https://api.platerecognizer.com/v1/plate-reader/",
+			{
+				method: "POST",
+				headers: { Authorization: `Token ${apiKey}` },
+				body: formData,
+			},
+		);
+	} catch (err) {
+		console.warn("Plate Recognizer request failed, skipping blur:", err);
+		return imageBuffer;
+	}
+
+	if (!response.ok) {
+		console.warn(
+			`Plate Recognizer API error: ${response.status}, skipping blur`,
+		);
+		return imageBuffer;
+	}
+
+	const data = (await response.json()) as PlateRecognizerResponse;
+
+	if (!data.results?.length) {
+		console.log("No plates detected");
+		return imageBuffer;
+	}
+
+	console.log(`Detected ${data.results.length} plate(s), blurring...`);
+
+	// Pad the blur region slightly to ensure full plate coverage
+	const PADDING = 10;
+	const meta = await sharp(imageBuffer).metadata();
+	const imgW = meta.width ?? 0;
+	const imgH = meta.height ?? 0;
+
+	let buf = imageBuffer;
+	for (const result of data.results) {
+		const left = Math.max(0, result.box.xmin - PADDING);
+		const top = Math.max(0, result.box.ymin - PADDING);
+		const width = Math.min(imgW - left, result.box.xmax - result.box.xmin + PADDING * 2);
+		const height = Math.min(imgH - top, result.box.ymax - result.box.ymin + PADDING * 2);
+
+		const blurred = await sharp(buf)
+			.extract({ left, top, width, height })
+			.blur(20)
+			.toBuffer();
+
+		buf = await sharp(buf)
+			.composite([{ input: blurred, left, top }])
+			.toBuffer();
+	}
+
+	return buf;
 }
 
 async function main(): Promise<void> {
@@ -67,15 +156,25 @@ async function main(): Promise<void> {
 	console.log(`Downloading: ${imageUrl}`);
 	execFileSync("curl", ["-L", "--silent", "--fail", "-o", tempPath, imageUrl]);
 
-	console.log(`Optimizing → ${filename}`);
-	await sharp(tempPath)
-		.resize(1200, 1200, { fit: "inside", withoutEnlargement: true })
-		.jpeg({ quality: 82, progressive: true })
-		.toFile(outputPath);
+	let imageBuffer = fs.readFileSync(tempPath);
 	fs.unlinkSync(tempPath);
 
+	imageBuffer = await blurLicensePlates(imageBuffer);
+
+	console.log(`Processing → ${filename} (square crop, entropy)`);
+	await sharp(imageBuffer)
+		.resize(1200, 1200, { fit: "cover", position: "entropy" })
+		.jpeg({ quality: 82, progressive: true })
+		.toFile(outputPath);
+
+	const rawGallery = fs.existsSync("gallery.json")
+		? (JSON.parse(fs.readFileSync("gallery.json", "utf8")) as Gallery)
+		: { images: [] };
+	const newGallery = updateGallery(rawGallery, filename);
+	fs.writeFileSync("gallery.json", `${JSON.stringify(newGallery, null, 2)}\n`);
+
 	let html = fs.readFileSync("index.html", "utf8");
-	html = updateHtml(html, filename);
+	html = updateOgImage(html, filename);
 	fs.writeFileSync("index.html", html);
 
 	fs.writeFileSync("/tmp/rav-filename", filename);

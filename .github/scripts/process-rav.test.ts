@@ -3,7 +3,8 @@ import {
 	extractImageUrl,
 	getDate,
 	getUniqueFilename,
-	updateHtml,
+	updateGallery,
+	updateOgImage,
 } from "./process-rav";
 
 // --- getDate ---
@@ -83,7 +84,7 @@ test("getUniqueFilename: appends _3 when base and _2 exist", () => {
 	expect(getUniqueFilename("20260320", exists)).toBe("20260320_3.jpg");
 });
 
-// --- updateHtml ---
+// --- updateOgImage ---
 
 const SAMPLE_HTML = `<!DOCTYPE html>
 <html>
@@ -91,14 +92,12 @@ const SAMPLE_HTML = `<!DOCTYPE html>
   <meta property="og:image" content="https://rav4.cool/assets/ravs/20260318.jpg" />
 </head>
 <body>
-  <div class="ravs">
-    <img src="assets/ravs/20260318.jpg" alt="RAV4" />
-  </div>
+  <div class="ravs"></div>
 </body>
 </html>`;
 
-test("updateHtml: updates og:image to new filename", () => {
-	const result = updateHtml(SAMPLE_HTML, "20260320.jpg");
+test("updateOgImage: updates og:image to new filename", () => {
+	const result = updateOgImage(SAMPLE_HTML, "20260320.jpg");
 	expect(result).toContain(
 		'content="https://rav4.cool/assets/ravs/20260320.jpg"',
 	);
@@ -107,16 +106,32 @@ test("updateHtml: updates og:image to new filename", () => {
 	);
 });
 
-test("updateHtml: inserts new img tag at top of .ravs div", () => {
-	const result = updateHtml(SAMPLE_HTML, "20260320.jpg");
-	const ravsIndex = result.indexOf('<div class="ravs">');
-	const newImgIndex = result.indexOf('src="assets/ravs/20260320.jpg"');
-	const oldImgIndex = result.indexOf('src="assets/ravs/20260318.jpg"');
-	expect(newImgIndex).toBeGreaterThan(ravsIndex);
-	expect(newImgIndex).toBeLessThan(oldImgIndex);
+test("updateOgImage: does not modify the rest of the HTML", () => {
+	const result = updateOgImage(SAMPLE_HTML, "20260320.jpg");
+	expect(result).toContain('<div class="ravs"></div>');
 });
 
-test("updateHtml: does not duplicate existing images", () => {
-	const result = updateHtml(SAMPLE_HTML, "20260320.jpg");
-	expect((result.match(/20260318\.jpg/g) ?? []).length).toBe(1);
+// --- updateGallery ---
+
+test("updateGallery: prepends filename to empty gallery", () => {
+	const result = updateGallery({ images: [] }, "20260320.jpg");
+	expect(result.images).toEqual(["20260320.jpg"]);
+});
+
+test("updateGallery: prepends filename to existing gallery", () => {
+	const result = updateGallery(
+		{ images: ["20260318.jpg", "20260115.jpg"] },
+		"20260320.jpg",
+	);
+	expect(result.images).toEqual([
+		"20260320.jpg",
+		"20260318.jpg",
+		"20260115.jpg",
+	]);
+});
+
+test("updateGallery: does not mutate the original gallery", () => {
+	const original = { images: ["20260318.jpg"] };
+	updateGallery(original, "20260320.jpg");
+	expect(original.images).toEqual(["20260318.jpg"]);
 });
