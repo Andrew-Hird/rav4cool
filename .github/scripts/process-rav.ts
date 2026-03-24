@@ -128,8 +128,23 @@ export async function blurLicensePlates(imageBuffer: Buffer): Promise<Buffer> {
 			.blur(20)
 			.toBuffer();
 
+		// Build a feathered mask: inset white rect with gaussian blur gives soft edges
+		const feather = Math.min(10, Math.floor(Math.min(width, height) / 4));
+		const maskSvg = Buffer.from(
+			`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+				<defs><filter id="f"><feGaussianBlur stdDeviation="${feather}"/></filter></defs>
+				<rect x="${feather}" y="${feather}" width="${width - feather * 2}" height="${height - feather * 2}" fill="white" filter="url(#f)"/>
+			</svg>`,
+		);
+		const mask = await sharp(maskSvg).png().toBuffer();
+
+		const blurredSoft = await sharp(blurred)
+			.ensureAlpha()
+			.composite([{ input: mask, blend: "dest-in" }])
+			.toBuffer();
+
 		buf = await sharp(buf)
-			.composite([{ input: blurred, left, top }])
+			.composite([{ input: blurredSoft, left, top }])
 			.toBuffer();
 	}
 
