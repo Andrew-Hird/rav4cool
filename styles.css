@@ -5,7 +5,9 @@ body {
 	flex-direction: column;
 	justify-content: center;
 	align-items: center;
-	cursor: url("assets/cursor.png") 64 64, auto;
+	cursor:
+		url("assets/cursor.png") 64 64,
+		auto;
 }
 
 .cont {

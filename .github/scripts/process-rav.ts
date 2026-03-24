@@ -123,7 +123,9 @@ export async function blurLicensePlates(imageBuffer: Buffer): Promise<Buffer> {
 			result.box.ymax - result.box.ymin + PADDING * 2,
 		);
 
-		const original = await sharp(buf).extract({ left, top, width, height }).toBuffer();
+		const original = await sharp(buf)
+			.extract({ left, top, width, height })
+			.toBuffer();
 		const blurred = await sharp(buf)
 			.extract({ left, top, width, height })
 			.blur(20)
