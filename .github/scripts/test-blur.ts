@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { blurLicensePlates } from "./process-rav.ts";
+import { blurLicensePlates } from "./process-rav";
 
 const inputPath =
 	process.argv[2] ??
