@@ -4,7 +4,7 @@ document.addEventListener("pointerdown", function onFirst() {
 });
 
 async function loadGallery() {
-	const res = await fetch("gallery.json");
+	const res = await fetch(`gallery.json?v=${Date.now()}`);
 	const { images } = await res.json();
 	const container = document.querySelector(".ravs");
 
