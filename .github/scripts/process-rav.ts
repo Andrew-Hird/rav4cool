@@ -139,15 +139,16 @@ export async function blurLicensePlates(imageBuffer: Buffer): Promise<Buffer> {
 		);
 		const mask = await sharp(maskSvg).png().toBuffer();
 
-		// Apply mask as alpha to blurred patch, then composite onto the original patch
-		// so transparent edges fade to the original pixels rather than black
+		// Apply mask as alpha to blurred patch, then composite over the original patch
+		// (kept as JPEG/no-alpha) so transparent edges fade to original pixels not black
 		const blurredSoft = await sharp(blurred)
 			.ensureAlpha()
 			.composite([{ input: mask, blend: "dest-in" }])
+			.png()
 			.toBuffer();
 		const patch = await sharp(original)
-			.ensureAlpha()
-			.composite([{ input: blurredSoft, blend: "over" }])
+			.composite([{ input: blurredSoft }])
+			.jpeg()
 			.toBuffer();
 
 		buf = await sharp(buf)
