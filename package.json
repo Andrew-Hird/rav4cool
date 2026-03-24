@@ -4,7 +4,8 @@
   "scripts": {
     "test": "bun test ./.github/scripts/process-rav.test.ts",
     "lint": "actionlint",
-    "biome": "biome check .github/scripts/"
+    "biome": "biome check .github/scripts/",
+    "blur": "bun run .github/scripts/test-blur.ts"
   },
   "dependencies": {
     "sharp": "^0.33.5"
