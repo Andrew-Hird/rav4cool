@@ -38,13 +38,14 @@ jobs:
         env:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
+          PLATE_RECOGNIZER_API_KEY: ${{ secrets.PLATE_RECOGNIZER_API_KEY }}
         run: bun run .github/scripts/process-rav.ts
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add assets/ravs/ index.html
+          git add assets/ravs/ gallery.json index.html
           git commit -m "$(cat /tmp/rav-commit-msg)"
           git push
 
