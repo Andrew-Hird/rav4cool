@@ -7,8 +7,7 @@ import path from "node:path";
 import { blurLicensePlates } from "./process-rav";
 
 const inputPath =
-	process.argv[2] ??
-	path.join(import.meta.dir, "test-images", "test.jpg");
+	process.argv[2] ?? path.join(import.meta.dir, "test-images", "test.jpg");
 
 if (!fs.existsSync(inputPath)) {
 	console.error(`Image not found: ${inputPath}`);
