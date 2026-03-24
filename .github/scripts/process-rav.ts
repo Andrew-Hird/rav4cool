@@ -123,13 +123,38 @@ export async function blurLicensePlates(imageBuffer: Buffer): Promise<Buffer> {
 			result.box.ymax - result.box.ymin + PADDING * 2,
 		);
 
+		const original = await sharp(buf)
+			.extract({ left, top, width, height })
+			.toBuffer();
 		const blurred = await sharp(buf)
 			.extract({ left, top, width, height })
 			.blur(20)
 			.toBuffer();
 
+		// Build a feathered mask: inset white rect with gaussian blur gives soft edges
+		const feather = Math.min(10, Math.floor(Math.min(width, height) / 4));
+		const maskSvg = Buffer.from(
+			`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+				<defs><filter id="f"><feGaussianBlur stdDeviation="${feather}"/></filter></defs>
+				<rect x="${feather}" y="${feather}" width="${width - feather * 2}" height="${height - feather * 2}" fill="white" filter="url(#f)"/>
+			</svg>`,
+		);
+		const mask = await sharp(maskSvg).png().toBuffer();
+
+		// Apply mask as alpha to blurred patch, then composite over the original patch
+		// (kept as JPEG/no-alpha) so transparent edges fade to original pixels not black
+		const blurredSoft = await sharp(blurred)
+			.ensureAlpha()
+			.composite([{ input: mask, blend: "dest-in" }])
+			.png()
+			.toBuffer();
+		const patch = await sharp(original)
+			.composite([{ input: blurredSoft }])
+			.jpeg()
+			.toBuffer();
+
 		buf = await sharp(buf)
-			.composite([{ input: blurred, left, top }])
+			.composite([{ input: patch, left, top }])
 			.toBuffer();
 	}
 

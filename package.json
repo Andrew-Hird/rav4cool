@@ -1,17 +1,18 @@
 {
-  "name": "rav4cool",
-  "private": true,
-  "scripts": {
-    "test": "bun test ./.github/scripts/process-rav.test.ts",
-    "lint": "actionlint",
-    "biome": "biome check .github/scripts/"
-  },
-  "dependencies": {
-    "sharp": "^0.33.5"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.4.8",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
-  }
+	"name": "rav4cool",
+	"private": true,
+	"scripts": {
+		"test": "bun test ./.github/scripts/process-rav.test.ts",
+		"lint": "actionlint",
+		"biome": "biome check .",
+		"blur": "bun run .github/scripts/test-blur.ts"
+	},
+	"dependencies": {
+		"sharp": "^0.33.5"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.8",
+		"@types/node": "^22.0.0",
+		"typescript": "^5.7.0"
+	}
 }
