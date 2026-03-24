@@ -123,6 +123,7 @@ export async function blurLicensePlates(imageBuffer: Buffer): Promise<Buffer> {
 			result.box.ymax - result.box.ymin + PADDING * 2,
 		);
 
+		const original = await sharp(buf).extract({ left, top, width, height }).toBuffer();
 		const blurred = await sharp(buf)
 			.extract({ left, top, width, height })
 			.blur(20)
@@ -138,13 +139,19 @@ export async function blurLicensePlates(imageBuffer: Buffer): Promise<Buffer> {
 		);
 		const mask = await sharp(maskSvg).png().toBuffer();
 
+		// Apply mask as alpha to blurred patch, then composite onto the original patch
+		// so transparent edges fade to the original pixels rather than black
 		const blurredSoft = await sharp(blurred)
 			.ensureAlpha()
 			.composite([{ input: mask, blend: "dest-in" }])
 			.toBuffer();
+		const patch = await sharp(original)
+			.ensureAlpha()
+			.composite([{ input: blurredSoft, blend: "over" }])
+			.toBuffer();
 
 		buf = await sharp(buf)
-			.composite([{ input: blurredSoft, left, top }])
+			.composite([{ input: patch, left, top }])
 			.toBuffer();
 	}
 
