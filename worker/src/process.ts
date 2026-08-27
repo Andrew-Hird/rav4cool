@@ -25,6 +25,13 @@ const OUTPUT_QUALITY = 82;
  */
 const BLUR_STRENGTH = 100;
 
+/**
+ * Quality for the intermediate JPEG we hand to Plate Recognizer when the
+ * upload is not already JPEG. High, because this is an interim artefact that
+ * gets re-encoded at OUTPUT_QUALITY afterwards.
+ */
+const TRANSCODE_QUALITY = 95;
+
 function toStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 	return new Blob([bytes]).stream() as ReadableStream<Uint8Array>;
 }
@@ -80,7 +87,9 @@ async function detectPlates(
 
 	try {
 		const data = (await response.json()) as PlateRecognizerResponse;
-		return (data.results ?? []).map((r) => r.box);
+		const boxes = (data.results ?? []).map((r) => r.box);
+		if (boxes.length === 0) console.log("No plates detected");
+		return boxes;
 	} catch (err) {
 		console.warn("Plate Recognizer returned an unreadable body:", err);
 		return [];
@@ -107,23 +116,47 @@ export async function processImage(
 	original: Uint8Array,
 	apiKey: string | undefined,
 ): Promise<Uint8Array> {
-	const boxes = await detectPlates(original, apiKey);
+	// info() is free and tells us the real format, which the file extension
+	// does not reliably do.
+	const info = await images.info(toStream(original));
+	const format = info.format;
+	const dims = "width" in info ? { w: info.width, h: info.height } : null;
+	console.log(
+		`Input: ${format} ${dims ? `${dims.w}x${dims.h}` : "(no dimensions)"}`,
+	);
 
-	let trims: TrimRegion[] = [];
-	if (boxes.length > 0) {
-		const info = await images.info(toStream(original));
-		if ("width" in info) {
-			trims = boxes
-				.map((box) => plateBoxToTrim(box, info.width, info.height))
-				.filter((t): t is TrimRegion => t !== null);
-		}
-		console.log(`Detected ${boxes.length} plate(s), blurring ${trims.length}`);
+	// Plate Recognizer rejects HEIC with a 400, and iPhones shoot HEIC by
+	// default — so most uploads would silently publish unblurred. Transcode to
+	// JPEG first so detection and blurring share one coordinate space.
+	// Cloudflare Images decodes HEIC happily; only the plate API does not.
+	let working = original;
+	if (format !== "image/jpeg") {
+		console.log(`Transcoding ${format} to JPEG for plate detection`);
+		const jpeg = await images
+			.input(toStream(original))
+			.output({ format: "image/jpeg", quality: TRANSCODE_QUALITY });
+		working = await toBytes(jpeg.image());
 	}
 
-	let transformer = images.input(toStream(original));
+	const boxes = await detectPlates(working, apiKey);
+
+	let trims: TrimRegion[] = [];
+	if (boxes.length > 0 && dims) {
+		trims = boxes
+			.map((box) => plateBoxToTrim(box, dims.w, dims.h))
+			.filter((t): t is TrimRegion => t !== null);
+		console.log(
+			`Detected ${boxes.length} plate(s), blurring ${trims.length}: ` +
+				trims.map((t) => `${t.width}x${t.height}@${t.left},${t.top}`).join(" "),
+		);
+	} else if (boxes.length > 0) {
+		console.warn("Plates detected but image dimensions unknown, skipping blur");
+	}
+
+	let transformer = images.input(toStream(working));
 	for (const trim of trims) {
 		const patch = images
-			.input(toStream(original))
+			.input(toStream(working))
 			.transform({ blur: BLUR_STRENGTH })
 			.transform({ trim });
 		transformer = transformer.draw(patch, { top: trim.top, left: trim.left });
