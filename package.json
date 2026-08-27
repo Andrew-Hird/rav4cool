@@ -2,17 +2,23 @@
 	"name": "rav4cool",
 	"private": true,
 	"scripts": {
-		"test": "bun test ./.github/scripts/process-rav.test.ts",
+		"test": "bun test ./worker/src/lib.test.ts ./.github/scripts/process-rav.test.ts",
+		"typecheck": "tsc -p worker/tsconfig.json",
 		"lint": "actionlint",
 		"biome": "biome check .",
-		"blur": "bun run .github/scripts/test-blur.ts"
+		"dev": "wrangler dev --config worker/wrangler.jsonc --remote",
+		"deploy": "wrangler deploy --config worker/wrangler.jsonc",
+		"tail": "wrangler tail --config worker/wrangler.jsonc",
+		"migrate": "bun run scripts/migrate-to-r2.ts"
 	},
 	"dependencies": {
 		"sharp": "^0.33.5"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.8",
+		"@cloudflare/workers-types": "^5.20260827.1",
 		"@types/node": "^22.0.0",
-		"typescript": "^5.7.0"
+		"typescript": "^5.7.0",
+		"wrangler": "^4.127.0"
 	}
 }
