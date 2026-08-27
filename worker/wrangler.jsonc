@@ -1,0 +1,38 @@
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "rav4cool-process",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-27",
+	"observability": { "enabled": true },
+	// Queue-triggered only — there is no fetch handler, so no public endpoint.
+	"workers_dev": false,
+
+	// Image resize + plate blur. sharp cannot run in a Worker, so all image
+	// work goes through this binding.
+	"images": { "binding": "IMAGES" },
+
+	// Two buckets on purpose: an R2 custom domain serves an entire bucket and
+	// cannot be scoped to a prefix, so raw uploads must not share a bucket with
+	// the public images or the unblurred originals would be fetchable.
+	"r2_buckets": [
+		{ "binding": "UPLOADS", "bucket_name": "rav4cool-uploads" },
+		{ "binding": "IMAGES_BUCKET", "bucket_name": "rav4cool-images" }
+	],
+
+	"queues": {
+		"consumers": [
+			{
+				"queue": "rav4cool-process",
+				// One at a time: each message does a read-modify-write of
+				// gallery.json, and concurrent consumers would clobber each other.
+				"max_batch_size": 1,
+				"max_concurrency": 1,
+				// MAX_ATTEMPTS in src/index.ts must stay at max_retries + 1.
+				"max_retries": 2,
+				"dead_letter_queue": "rav4cool-process-dlq"
+			}
+		]
+	}
+
+	// PLATE_RECOGNIZER_API_KEY is set with `wrangler secret put`, never here.
+}

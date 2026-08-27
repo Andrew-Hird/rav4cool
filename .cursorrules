@@ -1,22 +1,17 @@
-# RAV4 COOL Website Rules
+# RAV4 COOL
 
-## Adding New Photos
+See CLAUDE.md for the full architecture, conventions, and workflow. It is the
+maintained reference; this file only exists to point at it.
 
-When adding a new photo to the RAV4 COOL website:
+## The short version
 
-1. **Photo Placement**: Add the new photo at the TOP of the gallery in `index.html` (newest first)
-2. **File Format**: Use YYYYMMDD.jpg naming convention (e.g., 20250726.jpg)
-3. **HTML Structure**: Add `<img src="assets/ravs/FILENAME.jpg" alt="RAV4" />` in the `.ravs` div
-4. **Meta Image Update**: Update the `og:image` meta tag to use the newest photo
-5. **Gallery Order**: Photos should be ordered by date, newest first
-
-## File Structure
-- Photos go in: `assets/ravs/`
-- Main file: `index.html`
-- Styles: `styles.css`
-- Scripts: `script.js`
-
-## Generic Instructions
-When adding any new photo:
-1. Add `<img src="assets/ravs/FILENAME.jpg" alt="RAV4" />` at the top of the `.ravs` div
-2. Update `<meta property="og:image" content="https://rav4.cool/assets/ravs/FILENAME.jpg" />` 
+- Photos live in **Cloudflare R2**, not in this repo. Adding one is a bucket
+  upload, not a commit — drag it into `rav4cool-uploads` under `upload/` and a
+  Worker blurs the plates, crops it square, and publishes it.
+- The gallery manifest is `gallery.json` **in R2**. It is the source of truth
+  for what is displayed and in what order. Never re-sort it.
+- `index.html` contains no `<img>` tags for photos; `script.js` builds the
+  gallery at runtime from the manifest.
+- `og:image` points at the stable `img.rav4.cool/latest.jpg` and does not need
+  updating per photo.
+- Bun, not Node. Biome for lint/format, tabs and double quotes.

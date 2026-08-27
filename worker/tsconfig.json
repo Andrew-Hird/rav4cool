@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"target": "es2022",
+		"lib": ["es2022"],
+		"module": "es2022",
+		"moduleResolution": "bundler",
+		"types": ["@cloudflare/workers-types"],
+		"strict": true,
+		"noUnusedLocals": true,
+		"skipLibCheck": true,
+		"noEmit": true
+	},
+	// lib.test.ts is excluded: it needs bun:test globals, which conflict with
+	// the Workers types. lib.ts is deliberately free of Workers APIs so the
+	// root tsconfig can type-check the tests instead.
+	"include": ["src/**/*.ts"],
+	"exclude": ["src/**/*.test.ts"]
+}

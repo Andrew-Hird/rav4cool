@@ -1,0 +1,18 @@
+{
+	"rules": [
+		{
+			"allowed": {
+				"origins": [
+					"https://rav4.cool",
+					"https://www.rav4.cool",
+					"https://rav4cool.pages.dev",
+					"https://*.rav4cool.pages.dev"
+				],
+				"methods": ["GET", "HEAD"],
+				"headers": ["*"]
+			},
+			"exposeHeaders": ["ETag"],
+			"maxAgeSeconds": 3600
+		}
+	]
+}
