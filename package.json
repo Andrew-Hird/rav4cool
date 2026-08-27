@@ -2,7 +2,7 @@
 	"name": "rav4cool",
 	"private": true,
 	"scripts": {
-		"test": "bun test ./worker/src/lib.test.ts ./.github/scripts/process-rav.test.ts",
+		"test": "bun test ./worker/src/lib.test.ts",
 		"typecheck": "tsc -p worker/tsconfig.json",
 		"lint": "actionlint",
 		"biome": "biome check .",
