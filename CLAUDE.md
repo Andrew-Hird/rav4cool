@@ -33,7 +33,8 @@ rav4cool/
 │       ├── process.ts              # plate blur + square crop (Images binding)
 │       ├── lib.ts                  # pure helpers
 │       └── lib.test.ts
-├── scripts/migrate-to-r2.ts        # One-off: uploads assets/ravs/ into R2
+├── scripts/migrate-to-r2.ts        # One-off: the original R2 migration
+├── gallery.json                    # Migration input only — NOT the live manifest
 ├── .github/workflows/lint.yml      # CI: actionlint + biome + tests
 ├── biome.json
 └── package.json
@@ -205,23 +206,12 @@ check. The boundaries matter: `20240804roosubmission.jpg` and
 - **Biome is the only linter/formatter** — no ESLint, no Prettier.
 - **No build step for the site** — `script.js` runs directly in the browser.
 - **The R2 `gallery.json` is the source of truth**, not `assets/ravs/` and not
-  any file in this repo.
+  the `gallery.json` in this repo — that one is only the migration's input and
+  is not read by anything at runtime.
+- **There is no GitHub Issue upload path any more.** Photos are added by
+  dropping them into the R2 `upload/` prefix; that is the only route in.
 - **Never re-sort the manifest** — array order is hand-maintained.
 - **`assets/ravs/` is a backup.** The site no longer reads it. It is the
   rollback path, so do not delete it.
 - Run `bun run test` and `bun run typecheck` after changing anything in
   `worker/`.
-
----
-
-## Legacy — pending removal
-
-The GitHub Issue upload flow (`.github/workflows/process-rav.yml` and
-`.github/scripts/process-rav.ts`, using `sharp`) is **superseded** by the R2
-pipeline and is scheduled for deletion once the R2 path has processed a real
-photo end to end. It still commits images into `assets/ravs/` and the repo's
-`gallery.json`, which the site no longer reads — so photos uploaded that way
-will not appear. Use the R2 path.
-
-`gallery.json` in the repo root is retained only as the input to
-`scripts/migrate-to-r2.ts`; delete it once the migration has run.

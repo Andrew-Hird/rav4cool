@@ -3,6 +3,5 @@
 .claude
 node_modules
 .env
-.github/scripts/test-images/*
-!.github/scripts/test-images/.gitkeep.wrangler
+.wrangler
 .dev.vars

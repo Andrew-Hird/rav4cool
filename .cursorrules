@@ -14,4 +14,5 @@ maintained reference; this file only exists to point at it.
   gallery at runtime from the manifest.
 - `og:image` points at the stable `img.rav4.cool/latest.jpg` and does not need
   updating per photo.
+- There is no GitHub Issue upload path any more — the R2 drop is the only way in.
 - Bun, not Node. Biome for lint/format, tabs and double quotes.
