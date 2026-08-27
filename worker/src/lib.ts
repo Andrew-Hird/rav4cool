@@ -85,9 +85,26 @@ export function dateFromName(name: string | null | undefined): string | null {
 	return null;
 }
 
-export function todayStamp(now: Date): string {
-	const pad = (n: number) => String(n).padStart(2, "0");
-	return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+/**
+ * Workers run in UTC, but the RAVs are spotted in New Zealand — so a photo
+ * uploaded on a NZ morning would otherwise be stamped with yesterday's date
+ * for roughly half of every day. Format in the local zone instead.
+ */
+export const SITE_TIME_ZONE = "Pacific/Auckland";
+
+export function todayStamp(
+	now: Date,
+	timeZone: string = SITE_TIME_ZONE,
+): string {
+	// en-CA gives YYYY-MM-DD, which is YYYYMMDD once the dashes come out.
+	return new Intl.DateTimeFormat("en-CA", {
+		timeZone,
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	})
+		.format(now)
+		.replaceAll("-", "");
 }
 
 /** As dateFromName, but falls back to today — used for incoming uploads. */

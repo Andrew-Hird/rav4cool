@@ -8,6 +8,7 @@ import {
 	parseGallery,
 	plateBoxToTrim,
 	serializeGallery,
+	todayStamp,
 	updateGallery,
 } from "./lib";
 
@@ -264,4 +265,33 @@ test("parseGallery: tolerates entries without dimensions", () => {
 test("parseGallery: drops non-numeric dimensions", () => {
 	const text = '{"images":[{"file":"a.jpg","date":null,"width":"wide"}]}';
 	expect(parseGallery(text).images[0].width).toBeUndefined();
+});
+
+// --- dates are stamped in NZ time, not the Worker's UTC ---
+
+test("todayStamp: uses the NZ date, not UTC, for a NZ morning", () => {
+	// 20:00 UTC on the 27th is 08:00 on the 28th in Auckland.
+	expect(todayStamp(new Date("2026-08-27T20:00:00Z"))).toBe("20260828");
+});
+
+test("todayStamp: agrees with UTC when the zones do not straddle midnight", () => {
+	// 02:00 UTC on the 27th is 14:00 on the 27th in Auckland.
+	expect(todayStamp(new Date("2026-08-27T02:00:00Z"))).toBe("20260827");
+});
+
+test("todayStamp: rolls the year over in NZ time", () => {
+	// 11:00 UTC on Dec 31 is 00:00 on Jan 1 in Auckland (NZDT, UTC+13).
+	expect(todayStamp(new Date("2026-12-31T11:00:00Z"))).toBe("20270101");
+});
+
+test("todayStamp: handles the NZDT/NZST daylight-saving boundary", () => {
+	// NZDT (UTC+13) ends the first Sunday of April; 12:00 UTC on 4 Apr 2027
+	// is 2027-04-05 in Auckland either way, so this must not drift.
+	expect(todayStamp(new Date("2027-04-04T12:00:00Z"))).toBe("20270405");
+});
+
+test("getDate: an undated upload gets the NZ date", () => {
+	expect(getDate("IMG_0593.heic", new Date("2026-08-27T20:00:00Z"))).toBe(
+		"20260828",
+	);
 });

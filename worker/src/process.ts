@@ -145,7 +145,10 @@ export async function processImage(
 		trims = boxes
 			.map((box) => plateBoxToTrim(box, dims.w, dims.h))
 			.filter((t): t is TrimRegion => t !== null);
-		console.log(`Detected ${boxes.length} plate(s), blurring ${trims.length}`);
+		console.log(
+			`Detected ${boxes.length} plate(s), blurring ${trims.length}: ` +
+				trims.map((t) => `${t.width}x${t.height}@${t.left},${t.top}`).join(" "),
+		);
 	} else if (boxes.length > 0) {
 		console.warn("Plates detected but image dimensions unknown, skipping blur");
 	}
