@@ -63,8 +63,16 @@ test("isImageKey: accepts common image extensions", () => {
 	}
 });
 
+test("isImageKey: accepts HEIC/HEIF, the iPhone default", () => {
+	// Verified against the live Images binding: it decodes HEIC and we output
+	// JPEG. Rejecting these would bounce most phone uploads to failed/.
+	for (const key of ["IMG_0593.heic", "IMG_0593.HEIC", "a.heif"]) {
+		expect(isImageKey(key)).toBe(true);
+	}
+});
+
 test("isImageKey: rejects non-images and folder placeholders", () => {
-	for (const key of ["notes.txt", "upload/", "a.jpg.zip", "archive.heic"]) {
+	for (const key of ["notes.txt", "upload/", "a.jpg.zip", "notes.pdf"]) {
 		expect(isImageKey(key)).toBe(false);
 	}
 });

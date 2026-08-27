@@ -47,7 +47,18 @@ const MAX_FILENAME_ATTEMPTS = 100;
 // keeps this from matching arbitrary 8-digit runs the way /\d{8}/ would.
 const DATE_PATTERN = /20\d{6}/g;
 
-const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"];
+// HEIC/HEIF matter: iPhones shoot HEIC by default, so it is the most likely
+// format to arrive. Cloudflare Images decodes it and we always output JPEG.
+const IMAGE_EXTENSIONS = [
+	".jpg",
+	".jpeg",
+	".png",
+	".webp",
+	".gif",
+	".avif",
+	".heic",
+	".heif",
+];
 
 /** Strip any prefix, e.g. "upload/IMG_1234.jpg" -> "IMG_1234.jpg". */
 export function basename(key: string): string {
