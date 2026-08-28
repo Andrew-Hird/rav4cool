@@ -73,8 +73,11 @@ function emptyUpload(reported: number | undefined): string {
 			? "the event notification did not say what size it was"
 			: `the event notification reported ${reported} bytes`;
 	return (
-		`the upload is empty — read 0 bytes, ${notification}. There is no photo ` +
-		"here to process; upload it again."
+		`the upload is empty — read 0 bytes, ${notification}. Nothing arrived to ` +
+		"process. From an iPhone photo library, save the photo to Files first " +
+		"and upload that instead: an edit, Safari's resize-on-upload prompt, or " +
+		"the HEIC conversion all make iOS render a derivative at pick time, and " +
+		"it is that render which arrives empty."
 	);
 }
 

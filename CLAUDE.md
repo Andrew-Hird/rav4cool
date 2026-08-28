@@ -152,26 +152,30 @@ object, the event fires, and the upload is a photo in name only. The Worker
 rejects it outright (`reason: the upload is empty`), but nothing here can fix
 it; the bytes never left the phone.
 
-**The cause is not yet known.** Two plausible explanations have been tested
-and are wrong: the photo was taken minutes beforehand and never left the
-device, so it was not an un-downloaded iCloud asset; and uploading immediately
-after picking still produces an empty object, so it is not Safari's file
-handle going stale. What is established is only that the object in R2 has no
+The object in R2 held no bytes at all, so nothing on this side lost them —
+they never left the phone. Two explanations were tested and are wrong: the
+photo was taken minutes beforehand, so it was not an un-downloaded iCloud
+asset, and uploading immediately after picking failed the same way, so it was
+not Safari's file handle going stale.
+
+What the failing case had in common with the known reports is a **derivative
+render**. iOS does not hand a web page the file it has on disk; when the photo
+has been edited, when Safari's resize-on-upload prompt is answered with
+anything but *Actual Size*, or when a HEIC has to become a JPEG (which is why
+`IMG_0741.HEIC` uploads as `IMG_0741.jpeg`), it renders a fresh derivative at
+pick time. That render is what can come back empty, and it explains why a
+freshly-taken, fully-local photo uploaded without delay still arrived at zero
 bytes.
 
-The next occurrence will narrow it. `handleUpload` compares the size on the
-event notification against the bytes it actually reads and warns when they
-disagree, which splits the remaining possibilities cleanly:
+**Upload via Files, not the photo library**: Share → Save to Files on the
+phone, then upload that. The render happens once, in the foreground, into a
+real file on disk, so there is nothing left to go wrong at pick time.
 
-- **Both zero** — nothing was ever sent, and the problem is between the phone
-  and R2. Nothing in this repo can fix it; upload by another route.
-- **Notification non-zero, read zero** — the bytes reached R2 and something on
-  this side lost them.
-
-**Known-good route in the meantime**: Share → Save to Files on the phone, then
-upload from the Files app rather than the photo library. That skips Safari's
-photo-library transcode entirely and sends the original HEIC, which the Worker
-handles.
+If an empty upload ever appears from a route with no render in it, that
+assumption is wrong and the next thing to check is R2. `handleUpload` compares
+the size on the event notification against the bytes it reads and warns when
+they disagree — both zero means nothing was sent, and a non-zero notification
+against an empty read means the bytes reached R2 and we lost them.
 
 ---
 
