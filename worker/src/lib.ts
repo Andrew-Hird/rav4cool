@@ -85,6 +85,11 @@ export function dateFromName(name: string | null | undefined): string | null {
 	return null;
 }
 
+/** Return true only for a real calendar date written as YYYYMMDD. */
+export function isDateStamp(value: string): boolean {
+	return /^20\d{6}$/.test(value) && isRealDate(value);
+}
+
 /**
  * Workers run in UTC, but the RAVs are spotted in New Zealand — so a photo
  * uploaded on a NZ morning would otherwise be stamped with yesterday's date
@@ -113,6 +118,15 @@ export function getDate(
 	now: Date = new Date(),
 ): string {
 	return dateFromName(name) ?? todayStamp(now);
+}
+
+/** Resolve an optional ingress date before falling back to the filename. */
+export function getUploadDate(
+	name: string | null | undefined,
+	explicitDate: string | null | undefined,
+	now: Date = new Date(),
+): string {
+	return explicitDate ?? getDate(name, now);
 }
 
 export function isImageKey(key: string): boolean {

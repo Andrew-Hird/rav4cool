@@ -7,6 +7,8 @@ import {
 	describeInput,
 	getDate,
 	getUniqueFilename,
+	getUploadDate,
+	isDateStamp,
 	isImageKey,
 	isUndecodableImageError,
 	parseGallery,
@@ -60,6 +62,29 @@ test("getDate: zero-pads month and day", () => {
 
 test("getDate: handles null", () => {
 	expect(getDate(null, new Date(2026, 7, 28))).toBe("20260828");
+});
+
+test("isDateStamp: accepts a real YYYYMMDD date", () => {
+	expect(isDateStamp("20260829")).toBe(true);
+});
+
+test("isDateStamp: rejects malformed and impossible dates", () => {
+	for (const value of ["2026-08-29", "20261301", "20260229", "today"]) {
+		expect(isDateStamp(value)).toBe(false);
+	}
+});
+
+test("getUploadDate: explicit date takes precedence", () => {
+	expect(
+		getUploadDate("IMG_20260828.jpg", "20260827", new Date(2026, 7, 29)),
+	).toBe("20260827");
+});
+
+test("getUploadDate: falls back to filename then today", () => {
+	expect(getUploadDate("IMG_20260828.jpg", null)).toBe("20260828");
+	expect(getUploadDate("spotted.jpg", undefined, new Date(2026, 7, 29))).toBe(
+		"20260829",
+	);
 });
 
 // --- isImageKey ---
