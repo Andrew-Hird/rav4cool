@@ -211,3 +211,87 @@ export function plateBoxToTrim(
 
 	return { top, left, width, height };
 }
+
+/**
+ * Identify an image by its magic bytes, or null if the signature is unknown.
+ *
+ * The Images binding's `info()` reports the format too, but it has to decode
+ * the image to do it, so it is exactly the call that fails on an input the
+ * binding dislikes — which is no use when the point of asking is to decide how
+ * to hand that input to the binding. Signatures are cheap, pure, and testable,
+ * and they beat the file extension: iOS names its HEIC-to-JPEG conversions
+ * `.jpeg` but not every `.jpeg` off a phone actually is one.
+ */
+export function sniffFormat(bytes: Uint8Array): string | null {
+	if (startsWith(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg";
+	if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+		return "image/png";
+	}
+	if (hasAscii(bytes, 0, "GIF87a") || hasAscii(bytes, 0, "GIF89a")) {
+		return "image/gif";
+	}
+	if (hasAscii(bytes, 0, "RIFF") && hasAscii(bytes, 8, "WEBP")) {
+		return "image/webp";
+	}
+	// ISO base media container: a length, then "ftyp", then the brand. HEIC and
+	// AVIF are both this, and both are things an iPhone can produce.
+	if (hasAscii(bytes, 4, "ftyp")) {
+		const brand = ascii(bytes, 8, 4);
+		if (brand === "avif" || brand === "avis") return "image/avif";
+		if (brand.startsWith("hev") || brand.startsWith("hei")) return "image/heic";
+		if (brand === "mif1" || brand === "msf1") return "image/heif";
+	}
+	return null;
+}
+
+function startsWith(bytes: Uint8Array, signature: number[]): boolean {
+	if (bytes.length < signature.length) return false;
+	return signature.every((byte, i) => bytes[i] === byte);
+}
+
+function ascii(bytes: Uint8Array, offset: number, length: number): string {
+	let out = "";
+	for (let i = offset; i < offset + length && i < bytes.length; i++) {
+		out += String.fromCharCode(bytes[i] as number);
+	}
+	return out;
+}
+
+function hasAscii(
+	bytes: Uint8Array,
+	offset: number,
+	expected: string,
+): boolean {
+	return ascii(bytes, offset, expected.length) === expected;
+}
+
+/**
+ * Render an unknown thrown value as something worth putting in a log line or
+ * in the `reason` metadata of a quarantined upload.
+ *
+ * `String(err)` is not enough: the Images binding throws errors whose `message`
+ * is empty and whose only detail is the stack, so a failed upload was recorded
+ * as the bare word "Error" and the log showed a stack with no reason attached.
+ */
+export function describeError(err: unknown, depth = 0): string {
+	if (!(err instanceof Error)) return String(err);
+
+	const parts: string[] = [];
+	const code = (err as { code?: unknown }).code;
+	if (code !== undefined && code !== null) parts.push(`code ${String(code)}`);
+	if (err.message) parts.push(err.message);
+	if (parts.length === 0) {
+		const frame = (err.stack ?? "")
+			.split("\n")
+			.map((line) => line.trim())
+			.find((line) => line.startsWith("at "));
+		parts.push(frame ? `no message, thrown ${frame}` : "no message");
+	}
+
+	let described = `${err.name}: ${parts.join(" — ")}`;
+	const cause = (err as { cause?: unknown }).cause;
+	if (cause !== undefined && cause !== null && depth < 2) {
+		described += ` (cause: ${describeError(cause, depth + 1)})`;
+	}
+	return described;
+}

@@ -2,7 +2,13 @@
 // crop to a square. Replaces the sharp pipeline that ran in GitHub Actions —
 // sharp is a native module and cannot run in a Worker.
 
-import { type PlateBox, plateBoxToTrim, type TrimRegion } from "./lib";
+import {
+	describeError,
+	type PlateBox,
+	plateBoxToTrim,
+	sniffFormat,
+	type TrimRegion,
+} from "./lib";
 
 interface PlateResult {
 	box: PlateBox;
@@ -96,6 +102,37 @@ async function detectPlates(
 	}
 }
 
+/** Re-encode anything the binding can decode as a plain JPEG. */
+async function toJpeg(
+	images: ImagesBinding,
+	bytes: Uint8Array,
+): Promise<Uint8Array> {
+	const jpeg = await images
+		.input(toStream(bytes))
+		.output({ format: "image/jpeg", quality: TRANSCODE_QUALITY });
+	return toBytes(jpeg.image());
+}
+
+/**
+ * The image's intrinsic size, or null if the binding will not tell us.
+ *
+ * Fails soft on purpose. Dimensions only decide where the blur patches go, and
+ * the caller already handles not having them, so an info() that throws should
+ * cost the blur at worst — never the upload.
+ */
+async function readDimensions(
+	images: ImagesBinding,
+	bytes: Uint8Array,
+): Promise<{ w: number; h: number } | null> {
+	try {
+		const info = await images.info(toStream(bytes));
+		return "width" in info ? { w: info.width, h: info.height } : null;
+	} catch (err) {
+		console.warn(`Images info() failed: ${describeError(err)}`);
+		return null;
+	}
+}
+
 /**
  * Blur each plate region, then crop to a square, in a single transform chain.
  *
@@ -116,34 +153,50 @@ export async function processImage(
 	original: Uint8Array,
 	apiKey: string | undefined,
 ): Promise<Uint8Array> {
-	// info() is free and tells us the real format, which the file extension
-	// does not reliably do.
-	const info = await images.info(toStream(original));
-	const format = info.format;
-	const dims = "width" in info ? { w: info.width, h: info.height } : null;
+	// Sniffed rather than asked of info(): the format decision has to be made
+	// before the binding has been handed anything, and an upload the binding
+	// cannot read must not take the whole pipeline down with it.
+	const format = sniffFormat(original);
 	console.log(
-		`Input: ${format} ${dims ? `${dims.w}x${dims.h}` : "(no dimensions)"}`,
+		`Input: ${format ?? "unrecognised signature"}, ${original.byteLength} bytes`,
 	);
 
 	// Plate Recognizer rejects HEIC with a 400, and iPhones shoot HEIC by
 	// default — so most uploads would silently publish unblurred. Transcode to
 	// JPEG first so detection and blurring share one coordinate space.
 	// Cloudflare Images decodes HEIC happily; only the plate API does not.
+	// An unrecognised signature is transcoded too: whatever it is, the plate
+	// API is likelier to read a JPEG re-encode of it than the original.
 	let working = original;
 	if (format !== "image/jpeg") {
-		console.log(`Transcoding ${format} to JPEG for plate detection`);
-		const jpeg = await images
-			.input(toStream(original))
-			.output({ format: "image/jpeg", quality: TRANSCODE_QUALITY });
-		working = await toBytes(jpeg.image());
+		console.log(`Transcoding ${format ?? "unknown input"} to JPEG`);
+		working = await toJpeg(images, original);
 	}
+
+	// Dimensions are needed only to place the blur patches. They come last and
+	// they fail soft, because info() is the call that has actually broken
+	// uploads in the wild — an iPhone .jpeg it refused to read cost three
+	// retries and a quarantined photo before anything had even been attempted.
+	let dims = await readDimensions(images, working);
+	if (!dims && working === original) {
+		// Re-encoding normalises whatever the binding disliked about the file as
+		// uploaded. If that fails too the binding genuinely cannot read it, and
+		// the transform below will say so.
+		console.warn(
+			"Re-encoding through the Images binding to recover dimensions",
+		);
+		working = await toJpeg(images, original);
+		dims = await readDimensions(images, working);
+	}
+	if (dims) console.log(`Dimensions: ${dims.w}x${dims.h}`);
 
 	const boxes = await detectPlates(working, apiKey);
 
 	let trims: TrimRegion[] = [];
 	if (boxes.length > 0 && dims) {
+		const { w, h } = dims;
 		trims = boxes
-			.map((box) => plateBoxToTrim(box, dims.w, dims.h))
+			.map((box) => plateBoxToTrim(box, w, h))
 			.filter((t): t is TrimRegion => t !== null);
 		console.log(
 			`Detected ${boxes.length} plate(s), blurring ${trims.length}: ` +
