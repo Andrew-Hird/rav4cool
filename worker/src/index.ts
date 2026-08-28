@@ -10,6 +10,7 @@
 
 import {
 	basename,
+	describeError,
 	getDate,
 	getUniqueFilename,
 	isImageKey,
@@ -70,11 +71,18 @@ export default {
 					await quarantine(env, key, err.message);
 					message.ack();
 				} else if (message.attempts >= MAX_ATTEMPTS) {
-					console.error(`[${key}] giving up after ${message.attempts}:`, err);
-					await quarantine(env, key, String(err));
+					// describeError, not String(err): the Images binding throws errors
+					// with an empty message, which String() renders as a bare "Error".
+					const reason = describeError(err);
+					console.error(
+						`[${key}] giving up after ${message.attempts}: ${reason}`,
+					);
+					await quarantine(env, key, reason);
 					message.ack();
 				} else {
-					console.error(`[${key}] attempt ${message.attempts} failed:`, err);
+					console.error(
+						`[${key}] attempt ${message.attempts} failed: ${describeError(err)}`,
+					);
 					message.retry();
 				}
 			}

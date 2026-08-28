@@ -154,6 +154,10 @@ silently in `upload/`. `bun run tail` shows the log.
 through the Cloudflare Images binding (`env.IMAGES`), which is chainable so the
 entire operation is a single encode:
 
+0. Identify the format from its magic bytes (`sniffFormat`), and transcode to
+   JPEG unless it already is one. Deliberately *not* `IMAGES.info()`: that has
+   to decode the image, so it is the call that fails on exactly the inputs this
+   decision exists to handle.
 1. POST the original to Plate Recognizer to locate plates.
 2. For each plate, derive a padded, clamped crop region (`plateBoxToTrim`).
 3. Blur the *whole* image, trim to the plate region, and `draw()` that patch
@@ -166,6 +170,12 @@ entire operation is a single encode:
 
 **Plate detection fails open.** No API key, network error, bad status, or no
 plates all publish the image unblurred rather than dropping the upload.
+
+**So does `IMAGES.info()`**, which is called only for the intrinsic dimensions
+the blur patches are positioned against. It is the one binding call that has
+broken real uploads (an iPhone `.jpeg` it refused to read), so a throw costs the
+blur at worst, never the photo: the image is re-encoded through the binding and
+`info()` retried once against the normalised JPEG.
 
 ---
 

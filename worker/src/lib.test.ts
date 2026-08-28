@@ -2,12 +2,14 @@ import { expect, test } from "bun:test";
 import {
 	basename,
 	dateFromName,
+	describeError,
 	getDate,
 	getUniqueFilename,
 	isImageKey,
 	parseGallery,
 	plateBoxToTrim,
 	serializeGallery,
+	sniffFormat,
 	todayStamp,
 	updateGallery,
 } from "./lib";
@@ -294,4 +296,107 @@ test("getDate: an undated upload gets the NZ date", () => {
 	expect(getDate("IMG_0593.heic", new Date("2026-08-27T20:00:00Z"))).toBe(
 		"20260828",
 	);
+});
+
+// --- sniffFormat ---
+
+/** A header followed by enough filler that offset reads are in range. */
+function header(...bytes: number[]): Uint8Array {
+	return new Uint8Array([...bytes, ...new Array(32).fill(0)]);
+}
+
+function isoBmff(brand: string): Uint8Array {
+	const ascii = (text: string) => [...text].map((c) => c.charCodeAt(0));
+	return header(0, 0, 0, 0x20, ...ascii("ftyp"), ...ascii(brand));
+}
+
+test("sniffFormat: recognises JPEG", () => {
+	expect(sniffFormat(header(0xff, 0xd8, 0xff, 0xe0))).toBe("image/jpeg");
+});
+
+test("sniffFormat: recognises PNG", () => {
+	expect(
+		sniffFormat(header(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)),
+	).toBe("image/png");
+});
+
+test("sniffFormat: recognises GIF", () => {
+	const gif = new Uint8Array([..."GIF89a"].map((c) => c.charCodeAt(0)));
+	expect(sniffFormat(gif)).toBe("image/gif");
+});
+
+test("sniffFormat: recognises WebP by its RIFF container", () => {
+	const ascii = (text: string) => [...text].map((c) => c.charCodeAt(0));
+	const webp = new Uint8Array([...ascii("RIFF"), 0, 0, 0, 0, ...ascii("WEBP")]);
+	expect(sniffFormat(webp)).toBe("image/webp");
+});
+
+// The reason this function exists: an iPhone's HEIC has a `.jpeg` name often
+// enough that the extension cannot be trusted to pick the transcode path.
+test("sniffFormat: recognises HEIC regardless of its name", () => {
+	expect(sniffFormat(isoBmff("heic"))).toBe("image/heic");
+	expect(sniffFormat(isoBmff("heix"))).toBe("image/heic");
+	expect(sniffFormat(isoBmff("hevc"))).toBe("image/heic");
+});
+
+test("sniffFormat: recognises AVIF", () => {
+	expect(sniffFormat(isoBmff("avif"))).toBe("image/avif");
+});
+
+test("sniffFormat: recognises a bare HEIF brand", () => {
+	expect(sniffFormat(isoBmff("mif1"))).toBe("image/heif");
+});
+
+test("sniffFormat: returns null for an unknown signature", () => {
+	expect(sniffFormat(header(0x00, 0x01, 0x02, 0x03))).toBeNull();
+});
+
+test("sniffFormat: returns null rather than reading past a short buffer", () => {
+	expect(sniffFormat(new Uint8Array([0xff, 0xd8]))).toBeNull();
+	expect(sniffFormat(new Uint8Array())).toBeNull();
+});
+
+// --- describeError ---
+
+// The bug this was written for: the Images binding threw an error with an
+// empty message, so the log and the quarantine metadata both said "Error".
+test("describeError: falls back to the stack when there is no message", () => {
+	const err = new Error("");
+	err.stack = "Error\n    at throwErrorIfErrorResponse (images-api:282:15)";
+	expect(describeError(err)).toBe(
+		"Error: no message, thrown at throwErrorIfErrorResponse (images-api:282:15)",
+	);
+});
+
+test("describeError: says so when there is neither message nor stack", () => {
+	const err = new Error("");
+	err.stack = undefined;
+	expect(describeError(err)).toBe("Error: no message");
+});
+
+test("describeError: includes the message and a numeric code", () => {
+	const err = Object.assign(new Error("Unsupported image type"), {
+		code: 9520,
+	});
+	expect(describeError(err)).toBe("Error: code 9520 — Unsupported image type");
+});
+
+test("describeError: keeps the error's own name", () => {
+	expect(describeError(new TypeError("nope"))).toBe("TypeError: nope");
+});
+
+test("describeError: unwraps a cause", () => {
+	const err = new Error("outer", { cause: new Error("inner") });
+	expect(describeError(err)).toBe("Error: outer (cause: Error: inner)");
+});
+
+test("describeError: survives a self-referencing cause", () => {
+	const err = new Error("loop") as Error & { cause?: unknown };
+	err.cause = err;
+	expect(describeError(err)).toContain("Error: loop");
+});
+
+test("describeError: stringifies a non-Error throw", () => {
+	expect(describeError("just a string")).toBe("just a string");
+	expect(describeError(undefined)).toBe("undefined");
 });
