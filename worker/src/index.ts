@@ -58,6 +58,15 @@ const LATEST_CACHE = "public, max-age=300";
 /** An error that retrying cannot fix — quarantine the upload instead. */
 class TerminalError extends Error {}
 
+/**
+ * What a zero-byte upload gets told. R2 creates objects atomically, so an
+ * empty one is an upload that finished without ever sending a body — there is
+ * no later attempt at which the bytes turn up, and nothing to process.
+ */
+const EMPTY_UPLOAD =
+	"the upload is empty (0 bytes) — the transfer did not complete, so there " +
+	"is no photo here to process. Upload it again.";
+
 export default {
 	async queue(
 		batch: MessageBatch<R2EventNotification>,
@@ -118,6 +127,9 @@ async function handleUpload(
 				"of the Images binding",
 		);
 	}
+	// The notification carries the size, so an empty upload costs no R2 read.
+	// `size` is optional, hence the strict check and the second one below.
+	if (event.object.size === 0) throw new TerminalError(EMPTY_UPLOAD);
 
 	const object = await env.UPLOADS.get(key);
 	if (!object) {
@@ -126,6 +138,7 @@ async function handleUpload(
 		return;
 	}
 	const original = new Uint8Array(await object.arrayBuffer());
+	if (original.byteLength === 0) throw new TerminalError(EMPTY_UPLOAD);
 	if (original.byteLength > MAX_INPUT_BYTES) {
 		throw new TerminalError(
 			`${original.byteLength} bytes exceeds the Images binding limit`,

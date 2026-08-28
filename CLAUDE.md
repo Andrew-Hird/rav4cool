@@ -146,6 +146,13 @@ the overlay; otherwise today's date is used.
 are moved there with a `reason` in their custom metadata, rather than sitting
 silently in `upload/`. `bun run tail` shows the log.
 
+**Uploading from an iPhone**: Safari can hand the dashboard a **zero-byte
+file** — most often when the photo lives in iCloud under *Optimize iPhone
+Storage* and has not been pulled down to the device yet. R2 stores the empty
+object, the event fires, and the upload is a photo in name only. The Worker
+rejects it outright now (`reason: the upload is empty`), but the fix is at the
+phone: open the photo in Photos first so it downloads in full, then upload.
+
 ---
 
 ## Image Processing
