@@ -146,12 +146,27 @@ the overlay; otherwise today's date is used.
 are moved there with a `reason` in their custom metadata, rather than sitting
 silently in `upload/`. `bun run tail` shows the log.
 
-**Uploading from an iPhone**: Safari can hand the dashboard a **zero-byte
-file** — most often when the photo lives in iCloud under *Optimize iPhone
-Storage* and has not been pulled down to the device yet. R2 stores the empty
+**Uploading from an iPhone**: iOS Safari can hand the dashboard a **zero-byte
+file**, and it has — `IMG_0741.jpeg` arrived that way. R2 stores the empty
 object, the event fires, and the upload is a photo in name only. The Worker
-rejects it outright now (`reason: the upload is empty`), but the fix is at the
-phone: open the photo in Photos first so it downloads in full, then upload.
+rejects it outright (`reason: the upload is empty`), but nothing here can fix
+it; the bytes never left the phone.
+
+The cause is Safari's, not iCloud's, and it bites photos that are unarguably
+on the device. Picking from the photo library gives the page a `File` handle
+backed by a transcode of the original (that is why an `IMG_0741.HEIC` uploads
+as `IMG_0741.jpeg`), and that handle **goes stale roughly 90 seconds after you
+pick it**. Read it after that and you get zero bytes, silently. The R2
+dashboard makes this easy to hit: pick the file, then navigate to the right
+bucket and prefix, and the upload can start well past the deadline.
+
+Two ways around it:
+
+- **Upload immediately after picking.** Have the bucket and `upload/` prefix
+  already open, then choose the photo and send it straight away.
+- **Go via the Files app.** Share → Save to Files first, then upload from
+  Files. That is a real on-disk file rather than an expiring handle, and it
+  keeps the original HEIC, which the Worker transcodes anyway.
 
 ---
 
