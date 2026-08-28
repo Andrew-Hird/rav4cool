@@ -109,6 +109,21 @@ shorter `cache-control` on responses Cloudflare edge-caches. In practice:
 That last one is the one that matters: it is why a new photo appears within a
 minute. If `gallery.json` ever starts edge-caching, new photos would take 4
 hours to show up — fix it with a Cache Rule that respects origin headers.
+`script.js` also fetches it with `cache: "no-store"`, so a reload inside that
+minute still sees a photo published seconds ago.
+
+### Never reuse a `ravs/` key
+
+`immutable` is a promise that the bytes at a URL will never change, and
+browsers keep it: they will not revalidate for a year, so a hard reload does
+not help and nor does a Cloudflare purge for anyone who already has the file.
+
+Filenames are `YYYYMMDD.jpg`, derived from the date and deduplicated only
+against what is *currently* in the bucket. So **deleting a photo frees its
+name for the next upload on the same date**, and that upload publishes
+different bytes at a URL the world has cached as permanent. Hiding a photo by
+removing its entry from `gallery.json` is safe; deleting the object from
+`ravs/` is not, unless you are certain no date will collide with it.
 
 ---
 

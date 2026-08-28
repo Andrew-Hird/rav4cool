@@ -9,7 +9,12 @@ document.addEventListener("pointerdown", function onFirst() {
 });
 
 async function loadGallery() {
-	const res = await fetch(`${IMAGE_BASE}/gallery.json`);
+	// Never a cached manifest. R2 serves this with max-age=60, so without this
+	// a reload inside that minute silently misses a photo that has just been
+	// published — which is the whole point of the upload pipeline being live.
+	// The R2 migration dropped the `?v=` buster 8581467 added; no-store is the
+	// same intent without minting a fresh edge-cache key on every page load.
+	const res = await fetch(`${IMAGE_BASE}/gallery.json`, { cache: "no-store" });
 	if (!res.ok) throw new Error(`gallery.json: ${res.status}`);
 	const { images } = await res.json();
 
