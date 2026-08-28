@@ -10,6 +10,7 @@
 
 import {
 	basename,
+	contentTag,
 	describeError,
 	describeInput,
 	getDate,
@@ -203,8 +204,11 @@ async function handleUpload(
 	);
 
 	const date = getDate(basename(key));
+	// Tagged with a digest of the processed bytes, so a ravs/ URL can only ever
+	// serve what it first served — see getUniqueFilename for why that matters.
 	const filename = await getUniqueFilename(
 		date,
+		await contentTag(processed),
 		async (candidate) =>
 			(await env.IMAGES_BUCKET.head(IMAGE_PREFIX + candidate)) !== null,
 	);

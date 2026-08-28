@@ -121,20 +121,44 @@ export function isImageKey(key: string): boolean {
 }
 
 /**
- * First free `YYYYMMDD.jpg` / `YYYYMMDD_2.jpg` / ... for the given date.
+ * Four bytes of SHA-256 over the published image, as hex.
+ *
+ * Short enough to keep a filename readable, and the only thing standing
+ * between a deleted photo and the next upload inheriting its URL. See
+ * getUniqueFilename.
+ */
+export async function contentTag(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+	return [...new Uint8Array(digest, 0, 4)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+/**
+ * First free `YYYYMMDD-<tag>.jpg` / `YYYYMMDD-<tag>_2.jpg` / ... for a date.
  * `exists` is injected so this stays pure — callers back it with an R2 head().
+ *
+ * The tag is what makes the name safe to serve `immutable`. Without it, names
+ * were deduplicated only against what happened to be in the bucket at the
+ * time, so deleting a photo handed its URL to the next upload on the same
+ * date — different bytes behind a URL that browsers and the edge had been
+ * told would never change, and no purge reaches the copies already out there.
+ * Deriving it from the bytes means a URL can only ever serve what it first
+ * served.
  */
 export async function getUniqueFilename(
 	date: string,
+	tag: string,
 	exists: (filename: string) => Promise<boolean>,
 ): Promise<string> {
-	let filename = `${date}.jpg`;
+	const stem = `${date}-${tag}`;
+	let filename = `${stem}.jpg`;
 	let suffix = 2;
 	while (await exists(filename)) {
 		if (suffix > MAX_FILENAME_ATTEMPTS) {
-			throw new Error(`No free filename for ${date} after ${suffix} tries`);
+			throw new Error(`No free filename for ${stem} after ${suffix} tries`);
 		}
-		filename = `${date}_${suffix}.jpg`;
+		filename = `${stem}_${suffix}.jpg`;
 		suffix++;
 	}
 	return filename;

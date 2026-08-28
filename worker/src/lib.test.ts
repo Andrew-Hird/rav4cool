@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
 	basename,
+	contentTag,
 	dateFromName,
 	describeError,
 	describeInput,
@@ -85,27 +86,71 @@ test("isImageKey: rejects non-images and folder placeholders", () => {
 
 // --- getUniqueFilename ---
 
-test("getUniqueFilename: returns base filename when no conflict", async () => {
-	expect(await getUniqueFilename("20260320", async () => false)).toBe(
-		"20260320.jpg",
-	);
+test("getUniqueFilename: tags the date with the content", async () => {
+	expect(
+		await getUniqueFilename("20260320", "a1b2c3d4", async () => false),
+	).toBe("20260320-a1b2c3d4.jpg");
 });
 
-test("getUniqueFilename: appends _2 when base exists", async () => {
-	const exists = async (f: string) => f === "20260320.jpg";
-	expect(await getUniqueFilename("20260320", exists)).toBe("20260320_2.jpg");
+test("getUniqueFilename: appends _2 when the tagged name exists", async () => {
+	const exists = async (f: string) => f === "20260320-a1b2c3d4.jpg";
+	expect(await getUniqueFilename("20260320", "a1b2c3d4", exists)).toBe(
+		"20260320-a1b2c3d4_2.jpg",
+	);
 });
 
 test("getUniqueFilename: appends _3 when base and _2 exist", async () => {
 	const exists = async (f: string) =>
-		f === "20260320.jpg" || f === "20260320_2.jpg";
-	expect(await getUniqueFilename("20260320", exists)).toBe("20260320_3.jpg");
+		f === "20260320-a1b2c3d4.jpg" || f === "20260320-a1b2c3d4_2.jpg";
+	expect(await getUniqueFilename("20260320", "a1b2c3d4", exists)).toBe(
+		"20260320-a1b2c3d4_3.jpg",
+	);
 });
 
 test("getUniqueFilename: throws rather than looping forever", async () => {
-	expect(getUniqueFilename("20260320", async () => true)).rejects.toThrow(
-		/No free filename/,
+	expect(
+		getUniqueFilename("20260320", "a1b2c3d4", async () => true),
+	).rejects.toThrow(/No free filename/);
+});
+
+// The point of the tag: a date whose photo was deleted must not hand its URL
+// to the next upload, because ravs/* is served immutable.
+test("getUniqueFilename: different content on one date gives different names", async () => {
+	const free = async () => false;
+	const a = await getUniqueFilename("20260320", "a1b2c3d4", free);
+	const b = await getUniqueFilename("20260320", "99887766", free);
+	expect(a).not.toBe(b);
+});
+
+// The published name is never re-parsed for its date, but keep it parseable.
+test("getUniqueFilename: the date is still readable out of the name", async () => {
+	const name = await getUniqueFilename(
+		"20260320",
+		"a1b2c3d4",
+		async () => false,
 	);
+	expect(dateFromName(name)).toBe("20260320");
+});
+
+// --- contentTag ---
+
+test("contentTag: is eight hex characters", async () => {
+	expect(await contentTag(new Uint8Array([1, 2, 3]))).toMatch(/^[0-9a-f]{8}$/);
+});
+
+test("contentTag: is stable for the same bytes", async () => {
+	const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+	expect(await contentTag(bytes)).toBe(await contentTag(new Uint8Array(bytes)));
+});
+
+test("contentTag: differs for different bytes", async () => {
+	expect(await contentTag(new Uint8Array([1, 2, 3]))).not.toBe(
+		await contentTag(new Uint8Array([1, 2, 4])),
+	);
+});
+
+test("contentTag: handles an empty input", async () => {
+	expect(await contentTag(new Uint8Array())).toMatch(/^[0-9a-f]{8}$/);
 });
 
 // --- updateGallery ---

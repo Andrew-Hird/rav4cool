@@ -112,18 +112,23 @@ hours to show up — fix it with a Cache Rule that respects origin headers.
 `script.js` also fetches it with `cache: "no-store"`, so a reload inside that
 minute still sees a photo published seconds ago.
 
-### Never reuse a `ravs/` key
+### Why `ravs/` filenames carry a content tag
 
-`immutable` is a promise that the bytes at a URL will never change, and
-browsers keep it: they will not revalidate for a year, so a hard reload does
-not help and nor does a Cloudflare purge for anyone who already has the file.
+`immutable` is a promise that the bytes at a URL will never change, and both
+browsers and the Cloudflare edge keep it. Nothing revalidates for a year, a
+hard reload does not help, and a purge does nothing for copies already handed
+out — a private window still saw the stale photo, because the edge had it.
 
-Filenames are `YYYYMMDD.jpg`, derived from the date and deduplicated only
-against what is *currently* in the bucket. So **deleting a photo frees its
-name for the next upload on the same date**, and that upload publishes
-different bytes at a URL the world has cached as permanent. Hiding a photo by
-removing its entry from `gallery.json` is safe; deleting the object from
-`ravs/` is not, unless you are certain no date will collide with it.
+Published names are `YYYYMMDD-<8 hex>.jpg`, where the hex is a digest of the
+processed image (`contentTag`). Before that they were plain `YYYYMMDD.jpg`,
+deduplicated only against what happened to be in the bucket at the time, so
+**deleting a photo handed its URL to the next upload on the same date** — new
+bytes behind a URL the world had been told would never change. That happened.
+Deriving the name from the bytes means a URL can only ever serve what it first
+served, so deleting from `ravs/` is now safe.
+
+Entries already in the manifest keep whatever names they have; nothing
+re-derives a filename, and the frontend reads `file` verbatim.
 
 ---
 
