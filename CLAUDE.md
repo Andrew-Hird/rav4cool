@@ -109,6 +109,26 @@ shorter `cache-control` on responses Cloudflare edge-caches. In practice:
 That last one is the one that matters: it is why a new photo appears within a
 minute. If `gallery.json` ever starts edge-caching, new photos would take 4
 hours to show up — fix it with a Cache Rule that respects origin headers.
+`script.js` also fetches it with `cache: "no-store"`, so a reload inside that
+minute still sees a photo published seconds ago.
+
+### Why `ravs/` filenames carry a content tag
+
+`immutable` is a promise that the bytes at a URL will never change, and both
+browsers and the Cloudflare edge keep it. Nothing revalidates for a year, a
+hard reload does not help, and a purge does nothing for copies already handed
+out — a private window still saw the stale photo, because the edge had it.
+
+Published names are `YYYYMMDD-<8 hex>.jpg`, where the hex is a digest of the
+processed image (`contentTag`). Before that they were plain `YYYYMMDD.jpg`,
+deduplicated only against what happened to be in the bucket at the time, so
+**deleting a photo handed its URL to the next upload on the same date** — new
+bytes behind a URL the world had been told would never change. That happened.
+Deriving the name from the bytes means a URL can only ever serve what it first
+served, so deleting from `ravs/` is now safe.
+
+Entries already in the manifest keep whatever names they have; nothing
+re-derives a filename, and the frontend reads `file` verbatim.
 
 ---
 
@@ -146,6 +166,37 @@ the overlay; otherwise today's date is used.
 are moved there with a `reason` in their custom metadata, rather than sitting
 silently in `upload/`. `bun run tail` shows the log.
 
+**Uploading from an iPhone**: iOS Safari can hand the dashboard a **zero-byte
+file**, and it has — `IMG_0741.jpeg` arrived that way. R2 stores the empty
+object, the event fires, and the upload is a photo in name only. The Worker
+rejects it outright (`reason: the upload is empty`), but nothing here can fix
+it; the bytes never left the phone.
+
+The object in R2 held no bytes at all, so nothing on this side lost them —
+they never left the phone. Two explanations were tested and are wrong: the
+photo was taken minutes beforehand, so it was not an un-downloaded iCloud
+asset, and uploading immediately after picking failed the same way, so it was
+not Safari's file handle going stale.
+
+What the failing case had in common with the known reports is a **derivative
+render**. iOS does not hand a web page the file it has on disk; when the photo
+has been edited, when Safari's resize-on-upload prompt is answered with
+anything but *Actual Size*, or when a HEIC has to become a JPEG (which is why
+`IMG_0741.HEIC` uploads as `IMG_0741.jpeg`), it renders a fresh derivative at
+pick time. That render is what can come back empty, and it explains why a
+freshly-taken, fully-local photo uploaded without delay still arrived at zero
+bytes.
+
+**Upload via Files, not the photo library**: Share → Save to Files on the
+phone, then upload that. The render happens once, in the foreground, into a
+real file on disk, so there is nothing left to go wrong at pick time.
+
+If an empty upload ever appears from a route with no render in it, that
+assumption is wrong and the next thing to check is R2. `handleUpload` compares
+the size on the event notification against the bytes it reads and warns when
+they disagree — both zero means nothing was sent, and a non-zero notification
+against an empty read means the bytes reached R2 and we lost them.
+
 ---
 
 ## Image Processing
@@ -154,10 +205,12 @@ silently in `upload/`. `bun run tail` shows the log.
 through the Cloudflare Images binding (`env.IMAGES`), which is chainable so the
 entire operation is a single encode:
 
-0. Identify the format from its magic bytes (`sniffFormat`), and transcode to
-   JPEG unless it already is one. Deliberately *not* `IMAGES.info()`: that has
-   to decode the image, so it is the call that fails on exactly the inputs this
-   decision exists to handle.
+0. Identify the format from its magic bytes (`sniffFormat`, called in
+   `index.ts` before any of this) and transcode to JPEG unless it already is
+   one. Deliberately *not* `IMAGES.info()`: that has to decode the image, so it
+   is the call that fails on exactly the inputs this decision exists to handle.
+   Bytes matching no known signature are rejected here rather than handed to
+   the binding, because our error can name them and the binding's cannot.
 1. POST the original to Plate Recognizer to locate plates.
 2. For each plate, derive a padded, clamped crop region (`plateBoxToTrim`).
 3. Blur the *whole* image, trim to the plate region, and `draw()` that patch
@@ -176,6 +229,28 @@ the blur patches are positioned against. It is the one binding call that has
 broken real uploads (an iPhone `.jpeg` it refused to read), so a throw costs the
 blur at worst, never the photo: the image is re-encoded through the binding and
 `info()` retried once against the normalised JPEG.
+
+### Diagnosing a rejected upload
+
+The binding's errors carry a numeric `code` and, sometimes, an empty `message`
+— so `String(err)` renders them as the bare word "Error". Everything that logs
+or quarantines goes through `describeError` instead, which is why the `reason`
+metadata in `failed/` is now worth reading.
+
+Three codes are the binding's verdict on the bytes rather than a transient
+failure, and `isUndecodableImageError` quarantines them on the first attempt
+instead of retrying three times for the same answer:
+
+| Code | Meaning |
+| ---- | ------- |
+| 9412 | Not an image at all |
+| 9413 | Over the 100 megapixel area limit |
+| 9520 | A real image, in a format Images cannot read |
+
+9412 says only "the requested file is not an image", so `describeInput` adds
+the size, a hex dump of the first 16 bytes, and a text preview when the file
+turns out not to be binary — enough to tell a truncated photo from an HTML
+error page that got saved with a `.jpeg` name.
 
 ---
 

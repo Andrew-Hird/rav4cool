@@ -10,12 +10,17 @@
 
 import {
 	basename,
+	contentTag,
 	describeError,
+	describeInput,
 	getDate,
 	getUniqueFilename,
 	isImageKey,
+	isUndecodableImageError,
 	parseGallery,
+	sameEtag,
 	serializeGallery,
+	sniffFormat,
 	updateGallery,
 } from "./lib";
 import { OUTPUT_SIZE, processImage } from "./process";
@@ -55,6 +60,28 @@ const LATEST_CACHE = "public, max-age=300";
 /** An error that retrying cannot fix — quarantine the upload instead. */
 class TerminalError extends Error {}
 
+/**
+ * What a zero-byte upload gets told.
+ *
+ * `reported` is the size on the event notification, and printing it next to
+ * what we actually read is the point: the two agreeing at zero means the
+ * bytes never left the browser, while a non-zero `reported` against an empty
+ * read means the object changed under us and the problem is on this side.
+ */
+function emptyUpload(reported: number | undefined): string {
+	const notification =
+		reported === undefined
+			? "the event notification did not say what size it was"
+			: `the event notification reported ${reported} bytes`;
+	return (
+		`the upload is empty — read 0 bytes, ${notification}. Nothing arrived to ` +
+		"process. From an iPhone photo library, save the photo to Files first " +
+		"and upload that instead: an edit, Safari's resize-on-upload prompt, or " +
+		"the HEIC conversion all make iOS render a derivative at pick time, and " +
+		"it is that render which arrives empty."
+	);
+}
+
 export default {
 	async queue(
 		batch: MessageBatch<R2EventNotification>,
@@ -62,13 +89,21 @@ export default {
 	): Promise<void> {
 		for (const message of batch.messages) {
 			const key = message.body?.object?.key ?? "<unknown>";
+			const etag = message.body?.object?.eTag;
 			try {
 				await handleUpload(message.body, env);
 				message.ack();
 			} catch (err) {
 				if (err instanceof TerminalError) {
 					console.error(`[${key}] rejected: ${err.message}`);
-					await quarantine(env, key, err.message);
+					await quarantine(env, key, err.message, etag);
+					message.ack();
+				} else if (isUndecodableImageError(err)) {
+					// The binding has looked at the bytes and refused them. Three
+					// attempts at that is three identical answers, so quarantine now.
+					const reason = describeError(err);
+					console.error(`[${key}] rejected: ${reason}`);
+					await quarantine(env, key, reason, etag);
 					message.ack();
 				} else if (message.attempts >= MAX_ATTEMPTS) {
 					// describeError, not String(err): the Images binding throws errors
@@ -77,7 +112,7 @@ export default {
 					console.error(
 						`[${key}] giving up after ${message.attempts}: ${reason}`,
 					);
-					await quarantine(env, key, reason);
+					await quarantine(env, key, reason, etag);
 					message.ack();
 				} else {
 					console.error(
@@ -116,9 +151,36 @@ async function handleUpload(
 		return;
 	}
 	const original = new Uint8Array(await object.arrayBuffer());
+	// Speaks up only when it has something to say. The two disagreeing means
+	// the object was replaced between the event and this read, which is worth
+	// knowing about whether or not what we read is usable.
+	if (
+		event.object.size !== undefined &&
+		event.object.size !== original.byteLength
+	) {
+		console.warn(
+			`[${key}] read ${original.byteLength} bytes, notification said ` +
+				`${event.object.size} — the object changed after the event fired`,
+		);
+	}
+	if (original.byteLength === 0) {
+		throw new TerminalError(emptyUpload(event.object.size));
+	}
 	if (original.byteLength > MAX_INPUT_BYTES) {
 		throw new TerminalError(
 			`${original.byteLength} bytes exceeds the Images binding limit`,
+		);
+	}
+
+	// Check the bytes, not just the extension. The Images binding's verdict on
+	// an unreadable file is "the requested file is not an image" and nothing
+	// else, so anything we can identify ourselves is worth identifying here,
+	// where the reason lands in the quarantined object's metadata.
+	// Keep the signatures sniffFormat knows in step with IMAGE_EXTENSIONS.
+	const format = sniffFormat(original);
+	if (!format) {
+		throw new TerminalError(
+			`${basename(key)} is not a readable image: ${describeInput(original)}`,
 		);
 	}
 
@@ -137,12 +199,16 @@ async function handleUpload(
 	const processed = await processImage(
 		env.IMAGES,
 		original,
+		format,
 		env.PLATE_RECOGNIZER_API_KEY,
 	);
 
 	const date = getDate(basename(key));
+	// Tagged with a digest of the processed bytes, so a ravs/ URL can only ever
+	// serve what it first served — see getUniqueFilename for why that matters.
 	const filename = await getUniqueFilename(
 		date,
+		await contentTag(processed),
 		async (candidate) =>
 			(await env.IMAGES_BUCKET.head(IMAGE_PREFIX + candidate)) !== null,
 	);
@@ -176,8 +242,11 @@ async function handleUpload(
 	});
 
 	// Only once every write above has succeeded, so a failure leaves the raw
-	// file in place for the retry.
-	await env.UPLOADS.delete(key);
+	// file in place for the retry — and only if it is still the object this
+	// message was about. Re-uploading the same filename is the normal reaction
+	// to a photo not appearing, and deleting the replacement instead of the
+	// original loses the very photo the retry was meant to publish.
+	await deleteIfUnchanged(env, key, event.object.eTag);
 
 	console.log(`[${key}] published ravs/${filename} (date ${date})`);
 }
@@ -192,10 +261,23 @@ async function quarantine(
 	env: Env,
 	key: string,
 	reason: string,
+	etag: string | undefined,
 ): Promise<void> {
 	try {
 		const object = await env.UPLOADS.get(key);
 		if (!object) return;
+		// Whatever is at this key now may not be what failed. A retried message
+		// can be minutes behind the event, which is ample time to re-upload the
+		// same filename, and quarantining that would file a perfectly good photo
+		// under failed/ and delete it from under its own pending event.
+		// `etag &&` because only a positive mismatch is evidence. An event that
+		// carried no etag tells us nothing, and must not strand the upload here.
+		if (etag && !sameEtag(object.etag, etag)) {
+			console.log(
+				`[${key}] replaced since the event fired, leaving it for its own message`,
+			);
+			return;
+		}
 		await env.UPLOADS.put(FAILED_PREFIX + basename(key), object.body, {
 			customMetadata: { reason: reason.slice(0, 900), originalKey: key },
 		});
@@ -204,4 +286,22 @@ async function quarantine(
 	} catch (err) {
 		console.error(`[${key}] could not quarantine:`, err);
 	}
+}
+
+/**
+ * Delete a key unless it demonstrably holds a different object than the event
+ * described. An event without an etag is no evidence of replacement, so it
+ * deletes — leaving processed uploads behind would be its own bug.
+ */
+async function deleteIfUnchanged(
+	env: Env,
+	key: string,
+	etag: string | undefined,
+): Promise<void> {
+	const current = await env.UPLOADS.head(key);
+	if (etag && current && !sameEtag(current.etag, etag)) {
+		console.log(`[${key}] replaced since the event fired, leaving it in place`);
+		return;
+	}
+	await env.UPLOADS.delete(key);
 }

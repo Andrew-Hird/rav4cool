@@ -6,7 +6,6 @@ import {
 	describeError,
 	type PlateBox,
 	plateBoxToTrim,
-	sniffFormat,
 	type TrimRegion,
 } from "./lib";
 
@@ -151,25 +150,18 @@ async function readDimensions(
 export async function processImage(
 	images: ImagesBinding,
 	original: Uint8Array,
+	format: string,
 	apiKey: string | undefined,
 ): Promise<Uint8Array> {
-	// Sniffed rather than asked of info(): the format decision has to be made
-	// before the binding has been handed anything, and an upload the binding
-	// cannot read must not take the whole pipeline down with it.
-	const format = sniffFormat(original);
-	console.log(
-		`Input: ${format ?? "unrecognised signature"}, ${original.byteLength} bytes`,
-	);
+	console.log(`Input: ${format}, ${original.byteLength} bytes`);
 
 	// Plate Recognizer rejects HEIC with a 400, and iPhones shoot HEIC by
 	// default — so most uploads would silently publish unblurred. Transcode to
 	// JPEG first so detection and blurring share one coordinate space.
 	// Cloudflare Images decodes HEIC happily; only the plate API does not.
-	// An unrecognised signature is transcoded too: whatever it is, the plate
-	// API is likelier to read a JPEG re-encode of it than the original.
 	let working = original;
 	if (format !== "image/jpeg") {
-		console.log(`Transcoding ${format ?? "unknown input"} to JPEG`);
+		console.log(`Transcoding ${format} to JPEG`);
 		working = await toJpeg(images, original);
 	}
 

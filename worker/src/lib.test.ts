@@ -1,13 +1,17 @@
 import { expect, test } from "bun:test";
 import {
 	basename,
+	contentTag,
 	dateFromName,
 	describeError,
+	describeInput,
 	getDate,
 	getUniqueFilename,
 	isImageKey,
+	isUndecodableImageError,
 	parseGallery,
 	plateBoxToTrim,
+	sameEtag,
 	serializeGallery,
 	sniffFormat,
 	todayStamp,
@@ -82,27 +86,71 @@ test("isImageKey: rejects non-images and folder placeholders", () => {
 
 // --- getUniqueFilename ---
 
-test("getUniqueFilename: returns base filename when no conflict", async () => {
-	expect(await getUniqueFilename("20260320", async () => false)).toBe(
-		"20260320.jpg",
-	);
+test("getUniqueFilename: tags the date with the content", async () => {
+	expect(
+		await getUniqueFilename("20260320", "a1b2c3d4", async () => false),
+	).toBe("20260320-a1b2c3d4.jpg");
 });
 
-test("getUniqueFilename: appends _2 when base exists", async () => {
-	const exists = async (f: string) => f === "20260320.jpg";
-	expect(await getUniqueFilename("20260320", exists)).toBe("20260320_2.jpg");
+test("getUniqueFilename: appends _2 when the tagged name exists", async () => {
+	const exists = async (f: string) => f === "20260320-a1b2c3d4.jpg";
+	expect(await getUniqueFilename("20260320", "a1b2c3d4", exists)).toBe(
+		"20260320-a1b2c3d4_2.jpg",
+	);
 });
 
 test("getUniqueFilename: appends _3 when base and _2 exist", async () => {
 	const exists = async (f: string) =>
-		f === "20260320.jpg" || f === "20260320_2.jpg";
-	expect(await getUniqueFilename("20260320", exists)).toBe("20260320_3.jpg");
+		f === "20260320-a1b2c3d4.jpg" || f === "20260320-a1b2c3d4_2.jpg";
+	expect(await getUniqueFilename("20260320", "a1b2c3d4", exists)).toBe(
+		"20260320-a1b2c3d4_3.jpg",
+	);
 });
 
 test("getUniqueFilename: throws rather than looping forever", async () => {
-	expect(getUniqueFilename("20260320", async () => true)).rejects.toThrow(
-		/No free filename/,
+	expect(
+		getUniqueFilename("20260320", "a1b2c3d4", async () => true),
+	).rejects.toThrow(/No free filename/);
+});
+
+// The point of the tag: a date whose photo was deleted must not hand its URL
+// to the next upload, because ravs/* is served immutable.
+test("getUniqueFilename: different content on one date gives different names", async () => {
+	const free = async () => false;
+	const a = await getUniqueFilename("20260320", "a1b2c3d4", free);
+	const b = await getUniqueFilename("20260320", "99887766", free);
+	expect(a).not.toBe(b);
+});
+
+// The published name is never re-parsed for its date, but keep it parseable.
+test("getUniqueFilename: the date is still readable out of the name", async () => {
+	const name = await getUniqueFilename(
+		"20260320",
+		"a1b2c3d4",
+		async () => false,
 	);
+	expect(dateFromName(name)).toBe("20260320");
+});
+
+// --- contentTag ---
+
+test("contentTag: is eight hex characters", async () => {
+	expect(await contentTag(new Uint8Array([1, 2, 3]))).toMatch(/^[0-9a-f]{8}$/);
+});
+
+test("contentTag: is stable for the same bytes", async () => {
+	const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+	expect(await contentTag(bytes)).toBe(await contentTag(new Uint8Array(bytes)));
+});
+
+test("contentTag: differs for different bytes", async () => {
+	expect(await contentTag(new Uint8Array([1, 2, 3]))).not.toBe(
+		await contentTag(new Uint8Array([1, 2, 4])),
+	);
+});
+
+test("contentTag: handles an empty input", async () => {
+	expect(await contentTag(new Uint8Array())).toMatch(/^[0-9a-f]{8}$/);
 });
 
 // --- updateGallery ---
@@ -399,4 +447,88 @@ test("describeError: survives a self-referencing cause", () => {
 test("describeError: stringifies a non-Error throw", () => {
 	expect(describeError("just a string")).toBe("just a string");
 	expect(describeError(undefined)).toBe("undefined");
+});
+
+// --- describeInput ---
+
+test("describeInput: names a recognised format and its size", () => {
+	expect(describeInput(header(0xff, 0xd8, 0xff, 0xe0))).toBe(
+		"image/jpeg, 36 bytes",
+	);
+});
+
+test("describeInput: calls out an empty file", () => {
+	expect(describeInput(new Uint8Array())).toBe("empty file");
+});
+
+test("describeInput: hex-dumps the head of an unrecognised file", () => {
+	const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]);
+	expect(describeInput(bytes)).toBe(
+		"unrecognised signature, 6 bytes, first bytes de ad be ef 00 01",
+	);
+});
+
+// The whole reason for the text preview: 9412's "the requested file is not an
+// image" does not distinguish a truncated photo from a saved error page.
+test("describeInput: shows the text when the bytes are not binary at all", () => {
+	const html = new Uint8Array(
+		[..."<!DOCTYPE html><title>403</title>"].map((c) => c.charCodeAt(0)),
+	);
+	expect(describeInput(html)).toContain(
+		'starts with text "<!DOCTYPE html><title>403</title>"',
+	);
+});
+
+test("describeInput: does not call a binary file text on a byte or two", () => {
+	const bytes = new Uint8Array([0x41, 0x42, 0x00, 0xff, 0xfe, 0x01]);
+	expect(describeInput(bytes)).not.toContain("starts with text");
+});
+
+// --- isUndecodableImageError ---
+
+test("isUndecodableImageError: matches the codes that are verdicts", () => {
+	for (const code of [9412, 9413, 9520]) {
+		expect(
+			isUndecodableImageError(Object.assign(new Error(""), { code })),
+		).toBe(true);
+	}
+});
+
+test("isUndecodableImageError: accepts a code that arrives as a string", () => {
+	const err = Object.assign(new Error(""), { code: "9412" });
+	expect(isUndecodableImageError(err)).toBe(true);
+});
+
+test("isUndecodableImageError: leaves other failures retryable", () => {
+	expect(isUndecodableImageError(new Error("socket hang up"))).toBe(false);
+	expect(
+		isUndecodableImageError(Object.assign(new Error(""), { code: 9401 })),
+	).toBe(false);
+	expect(isUndecodableImageError(undefined)).toBe(false);
+	expect(isUndecodableImageError(null)).toBe(false);
+});
+
+// --- sameEtag ---
+
+test("sameEtag: matches identical etags", () => {
+	expect(sameEtag("abc123", "abc123")).toBe(true);
+});
+
+test("sameEtag: ignores quoting and weak prefixes", () => {
+	expect(sameEtag('"abc123"', "abc123")).toBe(true);
+	expect(sameEtag('W/"abc123"', '"abc123"')).toBe(true);
+});
+
+test("sameEtag: rejects different objects", () => {
+	expect(sameEtag("abc123", "def456")).toBe(false);
+});
+
+// A missing etag must never read as "unchanged" — the callers delete on the
+// strength of this, and deleting a replacement loses the photo.
+test("sameEtag: an absent etag never matches", () => {
+	expect(sameEtag(undefined, "abc123")).toBe(false);
+	expect(sameEtag("abc123", undefined)).toBe(false);
+	expect(sameEtag(undefined, undefined)).toBe(false);
+	expect(sameEtag("", "")).toBe(false);
+	expect(sameEtag(null, "abc123")).toBe(false);
 });
