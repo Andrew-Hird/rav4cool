@@ -295,3 +295,65 @@ export function describeError(err: unknown, depth = 0): string {
 	}
 	return described;
 }
+
+/**
+ * A one-line description of a blob of bytes, for a log line or the `reason` on
+ * a quarantined upload.
+ *
+ * When the signature is not one we know, the hex and text previews are the
+ * point: Cloudflare's 9412 is "the requested file is not an image" and nothing
+ * more, so the bytes themselves have to say whether this is a truncated photo,
+ * an HTML error page saved with a `.jpeg` name, or a format we should support.
+ */
+export function describeInput(bytes: Uint8Array): string {
+	if (bytes.byteLength === 0) return "empty file";
+
+	const size = `${bytes.byteLength} bytes`;
+	const format = sniffFormat(bytes);
+	if (format) return `${format}, ${size}`;
+
+	const hex = [...bytes.subarray(0, 16)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join(" ");
+	const text = printablePrefix(bytes, 48);
+	const preview =
+		text === null ? "" : `, starts with text ${JSON.stringify(text)}`;
+	return `unrecognised signature, ${size}, first bytes ${hex}${preview}`;
+}
+
+/** The leading run of printable ASCII, or null if these are not text bytes. */
+function printablePrefix(bytes: Uint8Array, limit: number): string | null {
+	let out = "";
+	for (let i = 0; i < limit && i < bytes.length; i++) {
+		const byte = bytes[i] as number;
+		const printable =
+			byte === 0x09 ||
+			byte === 0x0a ||
+			byte === 0x0d ||
+			(byte >= 0x20 && byte <= 0x7e);
+		if (!printable) break;
+		out += String.fromCharCode(byte);
+	}
+	// A stray printable byte or two at the head of a binary file means nothing.
+	// Only call it text if there is a run long enough to read.
+	return out.length >= 8 ? out : null;
+}
+
+/**
+ * Whether an Images-binding error is a verdict on the bytes rather than a
+ * transient failure. Retrying one of these three is guaranteed to fail again,
+ * so the upload should go straight to `failed/` instead of burning the queue's
+ * attempts first.
+ *
+ * The numeric `code` is real: it is what produced the "code 9412" in
+ * `IMAGES_TRANSFORM_ERROR 9412: Could not resize the image: The requested file
+ * is not an image" that quarantined upload/IMG_0741.jpeg.
+ */
+export function isUndecodableImageError(err: unknown): boolean {
+	const code = Number((err as { code?: unknown })?.code);
+	return (
+		code === 9412 || // not an image at all
+		code === 9413 || // over the 100 megapixel area limit
+		code === 9520 // a real image, in a format Images cannot read
+	);
+}

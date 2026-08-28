@@ -3,9 +3,11 @@ import {
 	basename,
 	dateFromName,
 	describeError,
+	describeInput,
 	getDate,
 	getUniqueFilename,
 	isImageKey,
+	isUndecodableImageError,
 	parseGallery,
 	plateBoxToTrim,
 	serializeGallery,
@@ -399,4 +401,63 @@ test("describeError: survives a self-referencing cause", () => {
 test("describeError: stringifies a non-Error throw", () => {
 	expect(describeError("just a string")).toBe("just a string");
 	expect(describeError(undefined)).toBe("undefined");
+});
+
+// --- describeInput ---
+
+test("describeInput: names a recognised format and its size", () => {
+	expect(describeInput(header(0xff, 0xd8, 0xff, 0xe0))).toBe(
+		"image/jpeg, 36 bytes",
+	);
+});
+
+test("describeInput: calls out an empty file", () => {
+	expect(describeInput(new Uint8Array())).toBe("empty file");
+});
+
+test("describeInput: hex-dumps the head of an unrecognised file", () => {
+	const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]);
+	expect(describeInput(bytes)).toBe(
+		"unrecognised signature, 6 bytes, first bytes de ad be ef 00 01",
+	);
+});
+
+// The whole reason for the text preview: 9412's "the requested file is not an
+// image" does not distinguish a truncated photo from a saved error page.
+test("describeInput: shows the text when the bytes are not binary at all", () => {
+	const html = new Uint8Array(
+		[..."<!DOCTYPE html><title>403</title>"].map((c) => c.charCodeAt(0)),
+	);
+	expect(describeInput(html)).toContain(
+		'starts with text "<!DOCTYPE html><title>403</title>"',
+	);
+});
+
+test("describeInput: does not call a binary file text on a byte or two", () => {
+	const bytes = new Uint8Array([0x41, 0x42, 0x00, 0xff, 0xfe, 0x01]);
+	expect(describeInput(bytes)).not.toContain("starts with text");
+});
+
+// --- isUndecodableImageError ---
+
+test("isUndecodableImageError: matches the codes that are verdicts", () => {
+	for (const code of [9412, 9413, 9520]) {
+		expect(
+			isUndecodableImageError(Object.assign(new Error(""), { code })),
+		).toBe(true);
+	}
+});
+
+test("isUndecodableImageError: accepts a code that arrives as a string", () => {
+	const err = Object.assign(new Error(""), { code: "9412" });
+	expect(isUndecodableImageError(err)).toBe(true);
+});
+
+test("isUndecodableImageError: leaves other failures retryable", () => {
+	expect(isUndecodableImageError(new Error("socket hang up"))).toBe(false);
+	expect(
+		isUndecodableImageError(Object.assign(new Error(""), { code: 9401 })),
+	).toBe(false);
+	expect(isUndecodableImageError(undefined)).toBe(false);
+	expect(isUndecodableImageError(null)).toBe(false);
 });

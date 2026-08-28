@@ -154,10 +154,12 @@ silently in `upload/`. `bun run tail` shows the log.
 through the Cloudflare Images binding (`env.IMAGES`), which is chainable so the
 entire operation is a single encode:
 
-0. Identify the format from its magic bytes (`sniffFormat`), and transcode to
-   JPEG unless it already is one. Deliberately *not* `IMAGES.info()`: that has
-   to decode the image, so it is the call that fails on exactly the inputs this
-   decision exists to handle.
+0. Identify the format from its magic bytes (`sniffFormat`, called in
+   `index.ts` before any of this) and transcode to JPEG unless it already is
+   one. Deliberately *not* `IMAGES.info()`: that has to decode the image, so it
+   is the call that fails on exactly the inputs this decision exists to handle.
+   Bytes matching no known signature are rejected here rather than handed to
+   the binding, because our error can name them and the binding's cannot.
 1. POST the original to Plate Recognizer to locate plates.
 2. For each plate, derive a padded, clamped crop region (`plateBoxToTrim`).
 3. Blur the *whole* image, trim to the plate region, and `draw()` that patch
@@ -176,6 +178,28 @@ the blur patches are positioned against. It is the one binding call that has
 broken real uploads (an iPhone `.jpeg` it refused to read), so a throw costs the
 blur at worst, never the photo: the image is re-encoded through the binding and
 `info()` retried once against the normalised JPEG.
+
+### Diagnosing a rejected upload
+
+The binding's errors carry a numeric `code` and, sometimes, an empty `message`
+— so `String(err)` renders them as the bare word "Error". Everything that logs
+or quarantines goes through `describeError` instead, which is why the `reason`
+metadata in `failed/` is now worth reading.
+
+Three codes are the binding's verdict on the bytes rather than a transient
+failure, and `isUndecodableImageError` quarantines them on the first attempt
+instead of retrying three times for the same answer:
+
+| Code | Meaning |
+| ---- | ------- |
+| 9412 | Not an image at all |
+| 9413 | Over the 100 megapixel area limit |
+| 9520 | A real image, in a format Images cannot read |
+
+9412 says only "the requested file is not an image", so `describeInput` adds
+the size, a hex dump of the first 16 bytes, and a text preview when the file
+turns out not to be binary — enough to tell a truncated photo from an HTML
+error page that got saved with a `.jpeg` name.
 
 ---
 

@@ -11,11 +11,14 @@
 import {
 	basename,
 	describeError,
+	describeInput,
 	getDate,
 	getUniqueFilename,
 	isImageKey,
+	isUndecodableImageError,
 	parseGallery,
 	serializeGallery,
+	sniffFormat,
 	updateGallery,
 } from "./lib";
 import { OUTPUT_SIZE, processImage } from "./process";
@@ -70,6 +73,13 @@ export default {
 					console.error(`[${key}] rejected: ${err.message}`);
 					await quarantine(env, key, err.message);
 					message.ack();
+				} else if (isUndecodableImageError(err)) {
+					// The binding has looked at the bytes and refused them. Three
+					// attempts at that is three identical answers, so quarantine now.
+					const reason = describeError(err);
+					console.error(`[${key}] rejected: ${reason}`);
+					await quarantine(env, key, reason);
+					message.ack();
 				} else if (message.attempts >= MAX_ATTEMPTS) {
 					// describeError, not String(err): the Images binding throws errors
 					// with an empty message, which String() renders as a bare "Error".
@@ -122,6 +132,18 @@ async function handleUpload(
 		);
 	}
 
+	// Check the bytes, not just the extension. The Images binding's verdict on
+	// an unreadable file is "the requested file is not an image" and nothing
+	// else, so anything we can identify ourselves is worth identifying here,
+	// where the reason lands in the quarantined object's metadata.
+	// Keep the signatures sniffFormat knows in step with IMAGE_EXTENSIONS.
+	const format = sniffFormat(original);
+	if (!format) {
+		throw new TerminalError(
+			`${basename(key)} is not a readable image: ${describeInput(original)}`,
+		);
+	}
+
 	// Read and validate the manifest before writing anything. A broken
 	// gallery.json must abort the whole upload rather than leave an orphaned
 	// image in the public bucket that nothing links to.
@@ -137,6 +159,7 @@ async function handleUpload(
 	const processed = await processImage(
 		env.IMAGES,
 		original,
+		format,
 		env.PLATE_RECOGNIZER_API_KEY,
 	);
 
