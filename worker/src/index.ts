@@ -17,6 +17,7 @@ import {
 	isImageKey,
 	isUndecodableImageError,
 	parseGallery,
+	sameEtag,
 	serializeGallery,
 	sniffFormat,
 	updateGallery,
@@ -59,13 +60,23 @@ const LATEST_CACHE = "public, max-age=300";
 class TerminalError extends Error {}
 
 /**
- * What a zero-byte upload gets told. R2 creates objects atomically, so an
- * empty one is an upload that finished without ever sending a body — there is
- * no later attempt at which the bytes turn up, and nothing to process.
+ * What a zero-byte upload gets told.
+ *
+ * `reported` is the size on the event notification, and printing it next to
+ * what we actually read is the point: the two agreeing at zero means the
+ * bytes never left the browser, while a non-zero `reported` against an empty
+ * read means the object changed under us and the problem is on this side.
  */
-const EMPTY_UPLOAD =
-	"the upload is empty (0 bytes) — the transfer did not complete, so there " +
-	"is no photo here to process. Upload it again.";
+function emptyUpload(reported: number | undefined): string {
+	const notification =
+		reported === undefined
+			? "the event notification did not say what size it was"
+			: `the event notification reported ${reported} bytes`;
+	return (
+		`the upload is empty — read 0 bytes, ${notification}. There is no photo ` +
+		"here to process; upload it again."
+	);
+}
 
 export default {
 	async queue(
@@ -74,20 +85,21 @@ export default {
 	): Promise<void> {
 		for (const message of batch.messages) {
 			const key = message.body?.object?.key ?? "<unknown>";
+			const etag = message.body?.object?.eTag;
 			try {
 				await handleUpload(message.body, env);
 				message.ack();
 			} catch (err) {
 				if (err instanceof TerminalError) {
 					console.error(`[${key}] rejected: ${err.message}`);
-					await quarantine(env, key, err.message);
+					await quarantine(env, key, err.message, etag);
 					message.ack();
 				} else if (isUndecodableImageError(err)) {
 					// The binding has looked at the bytes and refused them. Three
 					// attempts at that is three identical answers, so quarantine now.
 					const reason = describeError(err);
 					console.error(`[${key}] rejected: ${reason}`);
-					await quarantine(env, key, reason);
+					await quarantine(env, key, reason, etag);
 					message.ack();
 				} else if (message.attempts >= MAX_ATTEMPTS) {
 					// describeError, not String(err): the Images binding throws errors
@@ -96,7 +108,7 @@ export default {
 					console.error(
 						`[${key}] giving up after ${message.attempts}: ${reason}`,
 					);
-					await quarantine(env, key, reason);
+					await quarantine(env, key, reason, etag);
 					message.ack();
 				} else {
 					console.error(
@@ -127,9 +139,6 @@ async function handleUpload(
 				"of the Images binding",
 		);
 	}
-	// The notification carries the size, so an empty upload costs no R2 read.
-	// `size` is optional, hence the strict check and the second one below.
-	if (event.object.size === 0) throw new TerminalError(EMPTY_UPLOAD);
 
 	const object = await env.UPLOADS.get(key);
 	if (!object) {
@@ -138,7 +147,21 @@ async function handleUpload(
 		return;
 	}
 	const original = new Uint8Array(await object.arrayBuffer());
-	if (original.byteLength === 0) throw new TerminalError(EMPTY_UPLOAD);
+	// Speaks up only when it has something to say. The two disagreeing means
+	// the object was replaced between the event and this read, which is worth
+	// knowing about whether or not what we read is usable.
+	if (
+		event.object.size !== undefined &&
+		event.object.size !== original.byteLength
+	) {
+		console.warn(
+			`[${key}] read ${original.byteLength} bytes, notification said ` +
+				`${event.object.size} — the object changed after the event fired`,
+		);
+	}
+	if (original.byteLength === 0) {
+		throw new TerminalError(emptyUpload(event.object.size));
+	}
 	if (original.byteLength > MAX_INPUT_BYTES) {
 		throw new TerminalError(
 			`${original.byteLength} bytes exceeds the Images binding limit`,
@@ -212,8 +235,11 @@ async function handleUpload(
 	});
 
 	// Only once every write above has succeeded, so a failure leaves the raw
-	// file in place for the retry.
-	await env.UPLOADS.delete(key);
+	// file in place for the retry — and only if it is still the object this
+	// message was about. Re-uploading the same filename is the normal reaction
+	// to a photo not appearing, and deleting the replacement instead of the
+	// original loses the very photo the retry was meant to publish.
+	await deleteIfUnchanged(env, key, event.object.eTag);
 
 	console.log(`[${key}] published ravs/${filename} (date ${date})`);
 }
@@ -228,10 +254,23 @@ async function quarantine(
 	env: Env,
 	key: string,
 	reason: string,
+	etag: string | undefined,
 ): Promise<void> {
 	try {
 		const object = await env.UPLOADS.get(key);
 		if (!object) return;
+		// Whatever is at this key now may not be what failed. A retried message
+		// can be minutes behind the event, which is ample time to re-upload the
+		// same filename, and quarantining that would file a perfectly good photo
+		// under failed/ and delete it from under its own pending event.
+		// `etag &&` because only a positive mismatch is evidence. An event that
+		// carried no etag tells us nothing, and must not strand the upload here.
+		if (etag && !sameEtag(object.etag, etag)) {
+			console.log(
+				`[${key}] replaced since the event fired, leaving it for its own message`,
+			);
+			return;
+		}
 		await env.UPLOADS.put(FAILED_PREFIX + basename(key), object.body, {
 			customMetadata: { reason: reason.slice(0, 900), originalKey: key },
 		});
@@ -240,4 +279,22 @@ async function quarantine(
 	} catch (err) {
 		console.error(`[${key}] could not quarantine:`, err);
 	}
+}
+
+/**
+ * Delete a key unless it demonstrably holds a different object than the event
+ * described. An event without an etag is no evidence of replacement, so it
+ * deletes — leaving processed uploads behind would be its own bug.
+ */
+async function deleteIfUnchanged(
+	env: Env,
+	key: string,
+	etag: string | undefined,
+): Promise<void> {
+	const current = await env.UPLOADS.head(key);
+	if (etag && current && !sameEtag(current.etag, etag)) {
+		console.log(`[${key}] replaced since the event fired, leaving it in place`);
+		return;
+	}
+	await env.UPLOADS.delete(key);
 }

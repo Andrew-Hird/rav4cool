@@ -357,3 +357,23 @@ export function isUndecodableImageError(err: unknown): boolean {
 		code === 9520 // a real image, in a format Images cannot read
 	);
 }
+
+/**
+ * Whether two R2 etags refer to the same object, tolerating the quotes that
+ * some surfaces put around them and others do not.
+ *
+ * Used to check that the object sitting at a key is still the one an event
+ * was about. Absent etags never match: with nothing to compare, the caller
+ * must not conclude the object is unchanged.
+ */
+export function sameEtag(
+	a: string | null | undefined,
+	b: string | null | undefined,
+): boolean {
+	if (!a || !b) return false;
+	return unquote(a) === unquote(b);
+}
+
+function unquote(etag: string): string {
+	return etag.replace(/^W\//, "").replace(/^"/, "").replace(/"$/, "");
+}

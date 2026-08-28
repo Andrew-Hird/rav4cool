@@ -152,21 +152,26 @@ object, the event fires, and the upload is a photo in name only. The Worker
 rejects it outright (`reason: the upload is empty`), but nothing here can fix
 it; the bytes never left the phone.
 
-The cause is Safari's, not iCloud's, and it bites photos that are unarguably
-on the device. Picking from the photo library gives the page a `File` handle
-backed by a transcode of the original (that is why an `IMG_0741.HEIC` uploads
-as `IMG_0741.jpeg`), and that handle **goes stale roughly 90 seconds after you
-pick it**. Read it after that and you get zero bytes, silently. The R2
-dashboard makes this easy to hit: pick the file, then navigate to the right
-bucket and prefix, and the upload can start well past the deadline.
+**The cause is not yet known.** Two plausible explanations have been tested
+and are wrong: the photo was taken minutes beforehand and never left the
+device, so it was not an un-downloaded iCloud asset; and uploading immediately
+after picking still produces an empty object, so it is not Safari's file
+handle going stale. What is established is only that the object in R2 has no
+bytes.
 
-Two ways around it:
+The next occurrence will narrow it. `handleUpload` compares the size on the
+event notification against the bytes it actually reads and warns when they
+disagree, which splits the remaining possibilities cleanly:
 
-- **Upload immediately after picking.** Have the bucket and `upload/` prefix
-  already open, then choose the photo and send it straight away.
-- **Go via the Files app.** Share → Save to Files first, then upload from
-  Files. That is a real on-disk file rather than an expiring handle, and it
-  keeps the original HEIC, which the Worker transcodes anyway.
+- **Both zero** — nothing was ever sent, and the problem is between the phone
+  and R2. Nothing in this repo can fix it; upload by another route.
+- **Notification non-zero, read zero** — the bytes reached R2 and something on
+  this side lost them.
+
+**Known-good route in the meantime**: Share → Save to Files on the phone, then
+upload from the Files app rather than the photo library. That skips Safari's
+photo-library transcode entirely and sends the original HEIC, which the Worker
+handles.
 
 ---
 

@@ -10,6 +10,7 @@ import {
 	isUndecodableImageError,
 	parseGallery,
 	plateBoxToTrim,
+	sameEtag,
 	serializeGallery,
 	sniffFormat,
 	todayStamp,
@@ -460,4 +461,29 @@ test("isUndecodableImageError: leaves other failures retryable", () => {
 	).toBe(false);
 	expect(isUndecodableImageError(undefined)).toBe(false);
 	expect(isUndecodableImageError(null)).toBe(false);
+});
+
+// --- sameEtag ---
+
+test("sameEtag: matches identical etags", () => {
+	expect(sameEtag("abc123", "abc123")).toBe(true);
+});
+
+test("sameEtag: ignores quoting and weak prefixes", () => {
+	expect(sameEtag('"abc123"', "abc123")).toBe(true);
+	expect(sameEtag('W/"abc123"', '"abc123"')).toBe(true);
+});
+
+test("sameEtag: rejects different objects", () => {
+	expect(sameEtag("abc123", "def456")).toBe(false);
+});
+
+// A missing etag must never read as "unchanged" — the callers delete on the
+// strength of this, and deleting a replacement loses the photo.
+test("sameEtag: an absent etag never matches", () => {
+	expect(sameEtag(undefined, "abc123")).toBe(false);
+	expect(sameEtag("abc123", undefined)).toBe(false);
+	expect(sameEtag(undefined, undefined)).toBe(false);
+	expect(sameEtag("", "")).toBe(false);
+	expect(sameEtag(null, "abc123")).toBe(false);
 });
