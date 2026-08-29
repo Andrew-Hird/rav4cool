@@ -4,17 +4,18 @@
 // notification lands here. We blur the plates, crop to a square, publish to
 // the public bucket, and prepend an entry to the gallery manifest.
 //
-// There is deliberately no fetch() handler: the site reads gallery.json and
-// the images straight from R2 over the img.rav4.cool custom domain, so no
-// Worker sits in the read path.
+// The fetch() handler is an upload-only API. The site still reads gallery.json
+// and images straight from R2 over the img.rav4.cool custom domain.
 
+import PostalMime from "postal-mime";
 import {
 	basename,
 	contentTag,
 	describeError,
 	describeInput,
-	getDate,
 	getUniqueFilename,
+	getUploadDate,
+	isDateStamp,
 	isImageKey,
 	isUndecodableImageError,
 	parseGallery,
@@ -30,6 +31,8 @@ export interface Env {
 	IMAGES_BUCKET: R2Bucket;
 	IMAGES: ImagesBinding;
 	PLATE_RECOGNIZER_API_KEY?: string;
+	UPLOAD_API_TOKEN?: string;
+	AUTHORIZED_UPLOAD_EMAILS?: string;
 }
 
 interface R2EventNotification {
@@ -47,6 +50,7 @@ const FAILED_PREFIX = "failed/";
 
 /** The Images binding refuses an input over 20 MB. */
 const MAX_INPUT_BYTES = 20 * 1024 * 1024;
+const UPLOAD_PREFIX = "upload/";
 
 /** Must match `max_retries` + 1 in wrangler.jsonc. */
 const MAX_ATTEMPTS = 3;
@@ -83,6 +87,143 @@ function emptyUpload(reported: number | undefined): string {
 }
 
 export default {
+	async fetch(request: Request, env: Env): Promise<Response> {
+		if (
+			request.method !== "POST" ||
+			new URL(request.url).pathname !== "/upload"
+		) {
+			return jsonResponse({ error: "not found" }, 404);
+		}
+		if (!env.UPLOAD_API_TOKEN) {
+			console.error("UPLOAD_API_TOKEN is not configured");
+			return jsonResponse({ error: "upload API is not configured" }, 503);
+		}
+		if (
+			request.headers.get("Authorization") !== `Bearer ${env.UPLOAD_API_TOKEN}`
+		) {
+			return jsonResponse({ error: "unauthorized" }, 401);
+		}
+
+		const contentType = request.headers.get("Content-Type") ?? "";
+		if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+			return jsonResponse({ error: "expected multipart/form-data" }, 415);
+		}
+
+		let form: FormData;
+		try {
+			form = await request.formData();
+		} catch {
+			return jsonResponse({ error: "invalid multipart form data" }, 400);
+		}
+		const photo = form.get("photo");
+		if (!(photo instanceof File)) {
+			return jsonResponse({ error: "photo file is required" }, 400);
+		}
+		if (photo.size === 0) {
+			return jsonResponse({ error: "photo must not be empty" }, 400);
+		}
+		if (photo.size > MAX_INPUT_BYTES) {
+			return jsonResponse(
+				{ error: `photo exceeds ${MAX_INPUT_BYTES} bytes` },
+				413,
+			);
+		}
+
+		const suppliedDate = form.get("date");
+		if (
+			suppliedDate !== null &&
+			(typeof suppliedDate !== "string" || !isDateStamp(suppliedDate))
+		) {
+			return jsonResponse(
+				{ error: "date must be a valid YYYYMMDD value" },
+				400,
+			);
+		}
+
+		const originalName = photo.name || "shortcut-upload.jpg";
+		if (!isImageKey(originalName)) {
+			return jsonResponse(
+				{ error: "photo must use a supported image extension" },
+				415,
+			);
+		}
+		const safeName = basename(originalName).replace(/[^a-zA-Z0-9._-]/g, "_");
+		const key = `${UPLOAD_PREFIX}${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+		const bytes = new Uint8Array(await photo.arrayBuffer());
+		const format = sniffFormat(bytes);
+		if (!format) {
+			return jsonResponse(
+				{ error: "photo bytes are not a supported image" },
+				415,
+			);
+		}
+
+		await env.UPLOADS.put(key, bytes, {
+			httpMetadata: { contentType: photo.type || undefined },
+			...(suppliedDate ? { customMetadata: { date: suppliedDate } } : {}),
+		});
+		return jsonResponse({ accepted: true, uploadId: key }, 202);
+	},
+	async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
+		const allowedSenders = new Set(
+			(env.AUTHORIZED_UPLOAD_EMAILS ?? "")
+				.split(",")
+				.map((address) => address.trim().toLowerCase())
+				.filter(Boolean),
+		);
+		if (!allowedSenders.has(message.from.toLowerCase())) {
+			message.setReject("sender is not authorized to upload photos");
+			return;
+		}
+		if (!env.AUTHORIZED_UPLOAD_EMAILS) {
+			message.setReject("email upload is not configured");
+			return;
+		}
+
+		const subject = message.headers.get("subject") ?? "";
+		const dateMatch = subject.match(/(?:^|\s)date:\s*(\d{8})(?:\s|$)/i);
+		const dateToken = dateMatch?.[1];
+		if (dateToken !== undefined && !isDateStamp(dateToken)) {
+			message.setReject("date must be a valid YYYYMMDD value");
+			return;
+		}
+
+		let parsed: Awaited<ReturnType<PostalMime["parse"]>>;
+		try {
+			parsed = await new PostalMime().parse(message.raw);
+		} catch (err) {
+			console.error("could not parse upload email:", describeError(err));
+			message.setReject("could not parse email");
+			return;
+		}
+
+		const attachment = parsed.attachments.find(
+			(candidate) =>
+				typeof candidate.filename === "string" &&
+				isImageKey(candidate.filename) &&
+				typeof candidate.content !== "string" &&
+				candidate.content.byteLength > 0,
+		);
+		if (
+			!attachment?.filename ||
+			typeof attachment.content === "string" ||
+			!attachment.content
+		) {
+			message.setReject("email has no supported non-empty image attachment");
+			return;
+		}
+
+		const safeName = basename(attachment.filename).replace(
+			/[^a-zA-Z0-9._-]/g,
+			"_",
+		);
+		const key = `${UPLOAD_PREFIX}${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+		await env.UPLOADS.put(key, attachment.content, {
+			httpMetadata: { contentType: attachment.mimeType || undefined },
+			...(dateToken ? { customMetadata: { date: dateToken } } : {}),
+		});
+		console.log(`[email ${message.from}] accepted ${key}`);
+	},
 	async queue(
 		batch: MessageBatch<R2EventNotification>,
 		env: Env,
@@ -203,7 +344,11 @@ async function handleUpload(
 		env.PLATE_RECOGNIZER_API_KEY,
 	);
 
-	const date = getDate(basename(key));
+	const explicitDate = object.customMetadata?.date;
+	if (explicitDate !== undefined && !isDateStamp(explicitDate)) {
+		throw new TerminalError("upload metadata contains an invalid date");
+	}
+	const date = getUploadDate(basename(key), explicitDate);
 	// Tagged with a digest of the processed bytes, so a ravs/ URL can only ever
 	// serve what it first served — see getUniqueFilename for why that matters.
 	const filename = await getUniqueFilename(
@@ -249,6 +394,13 @@ async function handleUpload(
 	await deleteIfUnchanged(env, key, event.object.eTag);
 
 	console.log(`[${key}] published ravs/${filename} (date ${date})`);
+}
+
+function jsonResponse(body: Record<string, unknown>, status: number): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { "content-type": "application/json" },
+	});
 }
 
 /**

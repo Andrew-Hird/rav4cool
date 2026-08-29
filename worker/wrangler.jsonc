@@ -4,8 +4,9 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-08-27",
 	"observability": { "enabled": true },
-	// Queue-triggered only — there is no fetch handler, so no public endpoint.
+	// Upload API and email handler, plus the queue consumer below.
 	"workers_dev": false,
+	"routes": [{ "pattern": "api.rav4.cool", "custom_domain": true }],
 
 	// Image resize + plate blur. sharp cannot run in a Worker, so all image
 	// work goes through this binding.
@@ -34,5 +35,6 @@
 		]
 	}
 
-	// PLATE_RECOGNIZER_API_KEY is set with `wrangler secret put`, never here.
+	// Secrets are set with `wrangler secret put`, never here:
+	// PLATE_RECOGNIZER_API_KEY, UPLOAD_API_TOKEN, AUTHORIZED_UPLOAD_EMAILS.
 }
